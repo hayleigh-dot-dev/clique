@@ -66,11 +66,23 @@ export const observe_node = (resize_observer, node) => {
   resize_observer.observe(node);
 };
 
-export const add_window_mousemove_listener = (callback) => {
+export const add_window_mousemove_listener = (callback, handle_mouseup) => {
   window.addEventListener("mousemove", callback);
   window.addEventListener(
     "mouseup",
-    () => window.removeEventListener("mousemove", callback),
+    () => {
+      window.removeEventListener("mousemove", callback);
+      handle_mouseup();
+    },
     { once: true },
   );
+};
+
+export const request_animation_frame = (callback) => {
+  requestAnimationFrame(callback);
+};
+
+let inertiaIdCounter = 0;
+export const generate_inertia_id = () => {
+  return ++inertiaIdCounter;
 };

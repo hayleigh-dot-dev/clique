@@ -112,6 +112,9 @@ type Model {
     drag: #(Float, Float),
     observer: Option(NodeResizeObserver),
     handles: Dict(String, Dict(String, #(Float, Float))),
+    last_pan_velocity: #(Float, Float),
+    is_panning: Bool,
+    inertia_id: Option(Int),
   )
 }
 
@@ -128,6 +131,9 @@ fn init(_) -> #(Model, Effect(Msg)) {
       drag: #(0.0, 0.0),
       observer: None,
       handles: dict.new(),
+      last_pan_velocity: #(0.0, 0.0),
+      is_panning: False,
+      inertia_id: None,
     )
   let effect =
     effect.batch([
@@ -168,7 +174,9 @@ type Msg {
   NodesResized(changes: List(#(String, String, Float, Float)))
   UserPannedViewport(x: Float, y: Float)
   UserStartedPanning(x: Float, y: Float)
+  UserStoppedPanning
   UserZoomedViewport(x: Float, y: Float, delta: Float)
+  InertiaFrame(timestamp: Float, vx: Float, vy: Float, id: Int)
 }
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
@@ -233,7 +241,11 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           translate_x: model.transform.translate_x +. dx,
           translate_y: model.transform.translate_y +. dy,
         )
-      let model = Model(..model, transform:, drag:)
+
+      // Store velocity for inertia (scaled for smooth feel)
+      let last_pan_velocity = #(dx *. 0.8, dy *. 0.8)
+
+      let model = Model(..model, transform:, drag:, last_pan_velocity:)
       let effect = provide_transform(transform)
 
       #(model, effect)
@@ -241,10 +253,77 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     UserStartedPanning(x:, y:) -> {
       let drag = #(x, y)
-      let model = Model(..model, drag:)
+      let model =
+        Model(
+          ..model,
+          drag:,
+          last_pan_velocity: #(0.0, 0.0),
+          is_panning: True,
+          inertia_id: None,
+        )
       let effect = add_window_mousemove_listener()
 
       #(model, effect)
+    }
+
+    UserStoppedPanning -> {
+      let model = Model(..model, is_panning: False)
+
+      // Use last pan velocity for inertia
+      let #(vx, vy) = model.last_pan_velocity
+      let velocity_magnitude =
+        float.absolute_value(vx) +. float.absolute_value(vy)
+
+      case velocity_magnitude >. 0.5 {
+        True -> {
+          let inertia_id = generate_inertia_id()
+          let updated_model = Model(..model, inertia_id: Some(inertia_id))
+          let effect = start_inertia_animation(vx, vy, inertia_id)
+          #(updated_model, effect)
+        }
+        False -> #(model, effect.none())
+      }
+    }
+
+    InertiaFrame(timestamp: _, vx:, vy:, id:) -> {
+      case model.inertia_id {
+        Some(current_id) if current_id == id && !model.is_panning -> {
+          // Apply strong friction for faster stop
+          let friction = 0.85
+          let new_vx = vx *. friction
+          let new_vy = vy *. friction
+
+          // Stop if velocity is too low
+          let min_velocity = 0.2
+          case
+            float.absolute_value(new_vx) <. min_velocity
+            && float.absolute_value(new_vy) <. min_velocity
+          {
+            True -> {
+              let model = Model(..model, inertia_id: None)
+              #(model, effect.none())
+            }
+            False -> {
+              // Update transform
+              let transform =
+                Transform(
+                  ..model.transform,
+                  translate_x: model.transform.translate_x +. new_vx,
+                  translate_y: model.transform.translate_y +. new_vy,
+                )
+              let model = Model(..model, transform:)
+              let effect =
+                effect.batch([
+                  provide_transform(transform),
+                  continue_inertia_animation(new_vx, new_vy, id),
+                ])
+              #(model, effect)
+            }
+          }
+        }
+        _ -> #(model, effect.none())
+        // Inertia was cancelled or wrong ID
+      }
     }
 
     UserZoomedViewport(x:, y:, delta:) -> {
@@ -289,7 +368,10 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
 fn add_window_mousemove_listener() -> Effect(Msg) {
   use dispatch <- effect.from
-  use event <- do_add_window_mousemove_listener
+  use event <- do_add_window_mousemove_listener(fn() {
+    dispatch(UserStoppedPanning)
+  })
+
   let decoder = {
     use client_x <- decode.field("clientX", decode.float)
     use client_y <- decode.field("clientY", decode.float)
@@ -304,7 +386,28 @@ fn add_window_mousemove_listener() -> Effect(Msg) {
 }
 
 @external(javascript, "./viewport.ffi.mjs", "add_window_mousemove_listener")
-fn do_add_window_mousemove_listener(callback: fn(Dynamic) -> Nil) -> Nil
+fn do_add_window_mousemove_listener(
+  handle_mouseup: fn() -> Nil,
+  callback: fn(Dynamic) -> Nil,
+) -> Nil
+
+fn start_inertia_animation(vx: Float, vy: Float, id: Int) -> Effect(Msg) {
+  use dispatch <- effect.from
+  use new_timestamp <- do_request_animation_frame
+  dispatch(InertiaFrame(timestamp: new_timestamp, vx:, vy:, id:))
+}
+
+fn continue_inertia_animation(vx: Float, vy: Float, id: Int) -> Effect(Msg) {
+  use dispatch <- effect.from
+  use new_timestamp <- do_request_animation_frame
+  dispatch(InertiaFrame(timestamp: new_timestamp, vx:, vy:, id:))
+}
+
+@external(javascript, "./viewport.ffi.mjs", "request_animation_frame")
+fn do_request_animation_frame(callback: fn(Float) -> Nil) -> Nil
+
+@external(javascript, "./viewport.ffi.mjs", "generate_inertia_id")
+fn generate_inertia_id() -> Int
 
 fn observe_node(
   observer: NodeResizeObserver,
