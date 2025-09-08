@@ -3,25 +3,22 @@ import { List } from "../gleam.mjs";
 export const add_resize_observer = (shadow_root, callback) => {
   const viewportRef = new WeakRef(shadow_root.querySelector("#viewport"));
 
-  const observer = new ResizeObserver((entries) => {
-    const updates = [];
-    const viewport = viewportRef.deref();
+  let rafId = null;
+  let pendingUpdates = new Map();
 
-    if (!viewport) return;
+  const processUpdates = () => {
+    const viewport = viewportRef.deref();
+    if (!viewport || pendingUpdates.size === 0) return;
 
     const viewportRect = viewport.getBoundingClientRect();
     const scaleX = viewportRect.width / (viewport.clientWidth || 1);
     const scaleY = viewportRect.height / (viewport.clientHeight || 1);
 
-    for (const entry of entries) {
-      const node = entry.target.getAttribute("id");
+    const updates = [];
 
-      console.log({ target: entry.target, node });
-      if (!node) continue;
-
-      for (const handle of entry.target.querySelectorAll("clique-handle")) {
+    for (const [node, handles] of pendingUpdates) {
+      for (const handle of handles) {
         const name = handle.getAttribute("name");
-        console.log({ handle, name });
 
         if (!name) continue;
 
@@ -35,7 +32,31 @@ export const add_resize_observer = (shadow_root, callback) => {
       }
     }
 
-    callback(List.fromArray(updates));
+    pendingUpdates.clear();
+
+    if (updates.length > 0) {
+      callback(List.fromArray(updates));
+    }
+
+    rafId = null;
+  };
+
+  const observer = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const node = entry.target.getAttribute("id");
+
+      if (!node) continue;
+
+      const handles = entry.target.querySelectorAll("clique-handle");
+
+      if (handles.length === 0) continue;
+
+      pendingUpdates.set(node, Array.from(handles));
+    }
+
+    if (!rafId) {
+      rafId = requestAnimationFrame(processUpdates);
+    }
   });
 
   return observer;

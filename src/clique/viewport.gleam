@@ -341,6 +341,8 @@ fn view(model: Model) -> Element(Msg) {
           position: relative;
           width: 100%;
           height: 100%;
+          contain: layout style paint;
+          will-change: scroll-position;
       }
 
       #container {
@@ -349,10 +351,17 @@ fn view(model: Model) -> Element(Msg) {
           height: 100%;
           overflow: hidden;
           cursor: grab;
+          contain: layout paint;
+          backface-visibility: hidden;
+          transform: translateZ(0);
       }
 
       :host(:state(dragging)) {
         cursor: grabbing;
+      }
+
+      :host(:state(dragging)) #viewport {
+        will-change: transform;
       }
 
       #viewport {
@@ -362,6 +371,8 @@ fn view(model: Model) -> Element(Msg) {
           transform-origin: 0 0;
           transition: none;
           overflow: visible;
+          contain: layout style;
+          isolation: isolate;
       }
       "
     }),
@@ -465,10 +476,7 @@ fn view_viewport(
     |> string.replace("${scale}", float.to_string(transform.scale))
 
   html.div(
-    [
-      attribute.id("viewport"),
-      attribute.style("transform", translate),
-    ],
+    [attribute.id("viewport"), attribute.style("transform", translate)],
     children,
   )
 }

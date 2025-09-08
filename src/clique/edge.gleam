@@ -49,34 +49,7 @@ pub fn register_defaults() -> Result(Nil, lustre.Error) {
       view: view(_, fn(from, to) {
         view_svg([
           svg.path([
-            attribute("d", {
-              // Create an S-shaped bezier curve with two control points
-              let control_point1 = #(
-                from.0 +. { to.0 -. from.0 } /. 3.0,
-                from.1,
-              )
-              let control_point2 = #(
-                from.0 +. { to.0 -. from.0 } *. 2.0 /. 3.0,
-                to.1,
-              )
-
-              "M "
-              <> float.to_string(from.0)
-              <> " "
-              <> float.to_string(from.1)
-              <> " C "
-              <> float.to_string(control_point1.0)
-              <> " "
-              <> float.to_string(control_point1.1)
-              <> " "
-              <> float.to_string(control_point2.0)
-              <> " "
-              <> float.to_string(control_point2.1)
-              <> " "
-              <> float.to_string(to.0)
-              <> " "
-              <> float.to_string(to.1)
-            }),
+            attribute("d", create_bezier_path(from, to)),
             attribute("stroke", "black"),
             attribute("fill", "none"),
             attribute("stroke-width", "2"),
@@ -95,26 +68,7 @@ pub fn register_defaults() -> Result(Nil, lustre.Error) {
       view: view(_, fn(from, to) {
         view_svg([
           svg.path([
-            attribute("d", {
-              // Create an L-shaped path with a right angle, extending halfway before the angle
-              let mid_x = from.0 +. { to.0 -. from.0 } /. 2.0
-              "M "
-              <> float.to_string(from.0)
-              <> " "
-              <> float.to_string(from.1)
-              <> " L "
-              <> float.to_string(mid_x)
-              <> " "
-              <> float.to_string(from.1)
-              <> " L "
-              <> float.to_string(mid_x)
-              <> " "
-              <> float.to_string(to.1)
-              <> " L "
-              <> float.to_string(to.0)
-              <> " "
-              <> float.to_string(to.1)
-            }),
+            attribute("d", create_orthogonal_path(from, to)),
             attribute("stroke", "black"),
             attribute("fill", "none"),
             attribute("stroke-width", "2"),
@@ -256,6 +210,52 @@ fn view(
   }
 }
 
+// PATH CALCULATION HELPERS ----------------------------------------------------
+
+fn create_bezier_path(from: #(Float, Float), to: #(Float, Float)) -> String {
+  let dx = to.0 -. from.0
+  let control_point1 = #(from.0 +. dx /. 3.0, from.1)
+  let control_point2 = #(from.0 +. dx *. 2.0 /. 3.0, to.1)
+
+  "M"
+  <> float.to_string(from.0)
+  <> ","
+  <> float.to_string(from.1)
+  <> "C"
+  <> float.to_string(control_point1.0)
+  <> ","
+  <> float.to_string(control_point1.1)
+  <> ","
+  <> float.to_string(control_point2.0)
+  <> ","
+  <> float.to_string(control_point2.1)
+  <> ","
+  <> float.to_string(to.0)
+  <> ","
+  <> float.to_string(to.1)
+}
+
+fn create_orthogonal_path(from: #(Float, Float), to: #(Float, Float)) -> String {
+  let mid_x = from.0 +. { to.0 -. from.0 } /. 2.0
+
+  "M"
+  <> float.to_string(from.0)
+  <> ","
+  <> float.to_string(from.1)
+  <> "L"
+  <> float.to_string(mid_x)
+  <> ","
+  <> float.to_string(from.1)
+  <> "L"
+  <> float.to_string(mid_x)
+  <> ","
+  <> float.to_string(to.1)
+  <> "L"
+  <> float.to_string(to.0)
+  <> ","
+  <> float.to_string(to.1)
+}
+
 fn view_svg(children: List(Element(Msg))) -> Element(Msg) {
   html.svg(
     [
@@ -266,6 +266,8 @@ fn view_svg(children: List(Element(Msg))) -> Element(Msg) {
         #("position", "absolute"),
         #("top", "0"),
         #("left", "0"),
+        #("will-change", "transform"),
+        #("pointer-events", "none"),
       ]),
     ],
     children,

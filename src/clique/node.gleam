@@ -224,10 +224,14 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 // EFFECTS ---------------------------------------------------------------------
 
 fn set_css_position(position: Prop(#(Float, Float))) -> Effect(msg) {
-  effect.batch([
-    set_css_property("--x", float.to_string(position.value.0) <> "px"),
-    set_css_property("--y", float.to_string(position.value.1) <> "px"),
-  ])
+  let transform =
+    "translate("
+    <> float.to_string(position.value.0)
+    <> "px, "
+    <> float.to_string(position.value.1)
+    <> "px)"
+
+  set_css_property("transform", transform)
 }
 
 fn set_css_property(name: String, value: String) -> Effect(msg) {
@@ -312,10 +316,12 @@ fn view(_) -> Element(Msg) {
     html.style([], {
       ":host {
         display: block;
-        left: var(--x);
         min-width: max-content;
         position: absolute;
-        top: var(--y);
+        top: 0;
+        left: 0;
+        will-change: transform;
+        backface-visibility: hidden;
       }
 
       :host(:state(dragging)) {
