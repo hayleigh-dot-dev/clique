@@ -1,13 +1,14 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import clique/internal/dom
+import clique/internal/drag.{type DragState}
+import clique/internal/events
 import clique/internal/prop.{type Prop}
-import clique/viewport.{type Transform, Transform}
+import clique/viewport
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/float
 import gleam/int
-import gleam/json
 import gleam/list
 import gleam/string
 import lustre
@@ -61,20 +62,12 @@ pub fn nodrag() -> Attribute(msg) {
 // MODEL -----------------------------------------------------------------------
 
 type Model {
-  Model(
-    position: Prop(#(Float, Float)),
-    drag: #(Float, Float),
-    transform: Transform,
-  )
+  Model(position: Prop(#(Float, Float)), dragging: DragState, scale: Float)
 }
 
 fn init(_) -> #(Model, Effect(Msg)) {
   let model =
-    Model(
-      position: prop.new(#(0.0, 0.0)),
-      drag: #(0.0, 0.0),
-      transform: Transform(translate_x: 0.0, translate_y: 0.0, scale: 1.0),
-    )
+    Model(position: prop.new(#(0.0, 0.0)), dragging: drag.Settled, scale: 1.0)
 
   let effect =
     effect.batch([
@@ -113,7 +106,7 @@ fn options() -> List(component.Option(Msg)) {
       |> decode.map(ParentUpdatedY(value: _))
     }),
 
-    viewport.on_transform_change(ParentProvidedTransform),
+    viewport.on_scale_change(ParentProvidedScale),
   ]
 }
 
@@ -121,7 +114,8 @@ fn options() -> List(component.Option(Msg)) {
 
 type Msg {
   BrowserPainted
-  ParentProvidedTransform(transform: Transform)
+  InertiaSimulationTicked
+  ParentProvidedScale(scale: Float)
   ParentSetInitialX(value: Float)
   ParentSetInitialY(value: Float)
   ParentUpdatedX(value: Float)
@@ -133,10 +127,33 @@ type Msg {
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
-    BrowserPainted -> #(model, event.emit("clique:mount", json.null()))
+    BrowserPainted -> #(model, events.emit_node_mount())
 
-    ParentProvidedTransform(transform:) -> {
-      let model = Model(..model, transform:)
+    InertiaSimulationTicked -> {
+      let #(dragging, vx, vy, inertia_effect) =
+        drag.tick(model.dragging, InertiaSimulationTicked)
+
+      let x = model.position.value.0 +. { vx /. model.scale }
+      let y = model.position.value.1 +. { vy /. model.scale }
+
+      let dx = x -. model.position.value.0
+      let dy = y -. model.position.value.1
+
+      let position = prop.update(model.position, #(x, y))
+      let model = Model(..model, position:, dragging:)
+
+      let effect =
+        effect.batch([
+          inertia_effect,
+          events.emit_node_drag(x, y, dx, dy),
+          set_css_position(model.position),
+        ])
+
+      #(model, effect)
+    }
+
+    ParentProvidedScale(scale:) -> {
+      let model = Model(..model, scale:)
       let effect = effect.none()
 
       #(model, effect)
@@ -177,33 +194,29 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     }
 
     UserDraggedNode(x:, y:) -> {
-      let dx = { x -. model.drag.0 } /. model.transform.scale
-      let dy = { y -. model.drag.1 } /. model.transform.scale
-      let drag = #(x, y)
-      let #(position, effect) =
-        prop.update(
-          model.position,
-          "clique:drag",
-          fn(position) {
-            json.object([
-              #("x", json.float(position.0)),
-              #("dx", json.float(dx)),
-              #("y", json.float(position.1)),
-              #("dy", json.float(dy)),
-            ])
-          },
-          #(model.position.value.0 +. dx, model.position.value.1 +. dy),
-        )
+      let #(dragging, dx, dy) = drag.update(model.dragging, x, y)
+      let dx = dx /. model.scale
+      let dy = dy /. model.scale
 
-      let model = Model(..model, position:, drag:)
-      let effect = effect.batch([effect, set_css_position(position)])
+      let position =
+        prop.update(model.position, #(
+          model.position.value.0 +. dx,
+          model.position.value.1 +. dy,
+        ))
+
+      let model = Model(..model, position:, dragging:)
+      let effect =
+        effect.batch([
+          events.emit_node_drag(x, y, dx, dy),
+          set_css_position(position),
+        ])
 
       #(model, effect)
     }
 
     UserStartedDrag(x:, y:) -> {
-      let drag = #(x, y)
-      let model = Model(..model, drag:)
+      let dragging = drag.start(x, y)
+      let model = Model(..model, dragging:)
       let effect =
         effect.batch([
           add_window_mousemove_listener(),
@@ -214,7 +227,12 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     }
 
     UserStoppedDrag -> {
-      let effect = component.remove_pseudo_state("dragging")
+      let #(dragging, inertia_effect) =
+        drag.stop(model.dragging, InertiaSimulationTicked)
+
+      let model = Model(..model, dragging:)
+      let effect =
+        effect.batch([inertia_effect, component.remove_pseudo_state("dragging")])
 
       #(model, effect)
     }

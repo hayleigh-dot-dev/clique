@@ -1,17 +1,16 @@
 // IMPORTS ---------------------------------------------------------------------
 
-import clique
 import clique/edge
+import clique/edge_renderer
 import clique/handle
 import clique/node
 import clique/viewport
-import gleam/float
+import gleam/int
 import gleam/list
 import lustre
 import lustre/attribute
 import lustre/element.{type Element}
 import lustre/element/html
-import lustre/element/keyed
 
 // MAIN ------------------------------------------------------------------------
 
@@ -20,7 +19,8 @@ pub fn main() {
 
   let assert Ok(_) = viewport.register()
   let assert Ok(_) = node.register()
-  let assert Ok(_) = edge.register_defaults()
+  let assert Ok(_) = edge.register()
+  let assert Ok(_) = edge_renderer.register()
   let assert Ok(_) = handle.register()
   let assert Ok(_) = lustre.start(app, "#app", Nil)
 
@@ -34,29 +34,35 @@ type Model {
 }
 
 type Node {
-  Node(id: String, x: Float, y: Float, params: NodeParams)
+  Node(id: String, x: Float, y: Float, label: String)
 }
 
-type NodeParams {
-  Osc(frequency: Float, kind: String)
-  Amp(gain: Float)
+type Edge {
+  Edge(source: #(String, String), target: #(String, String))
 }
 
-type Edge =
-  #(String, String, String, String)
+const count = 100
 
 fn init(_) -> Model {
-  let nodes = [
-    Node(id: "a", x: 0.0, y: 200.0, params: Osc(frequency: 440.0, kind: "sine")),
-    Node(id: "b", x: 250.0, y: 250.0, params: Amp(gain: 0.2)),
-    Node(
-      id: "c",
-      x: -200.0,
-      y: 50.0,
-      params: Osc(frequency: 20.0, kind: "sine"),
-    ),
-  ]
-  let edges = [#("a", "out", "b", "in"), #("c", "out", "a", "freq")]
+  let nodes =
+    list.range(0, count - 1)
+    |> list.map(fn(i) {
+      Node(
+        id: "node-" <> int.to_string(i),
+        x: int.to_float({ i % 20 } * 300),
+        y: int.to_float({ i / 20 } * 400),
+        label: "Node " <> int.to_string(i + 1),
+      )
+    })
+
+  let edges =
+    list.range(0, count - 2)
+    |> list.map(fn(i) {
+      Edge(source: #("node-" <> int.to_string(i), "output"), target: #(
+        "node-" <> int.to_string({ i + 1 }),
+        "input",
+      ))
+    })
 
   Model(nodes:, edges:)
 }
@@ -65,147 +71,82 @@ fn init(_) -> Model {
 
 type Msg
 
-fn update(model: Model, msg: Msg) -> Model {
-  case msg {
-    _ -> model
-  }
+fn update(model: Model, _msg: Msg) -> Model {
+  model
 }
 
 // VIEW ------------------------------------------------------------------------
 
 fn view(model: Model) -> Element(Msg) {
-  viewport.root([attribute.class("w-screen h-screen")], [
-    keyed.fragment({
-      use edge <- list.map(model.edges)
-      let key = edge.0 <> "-" <> edge.1 <> "-" <> edge.2 <> "-" <> edge.3
-      let html = case float.random() {
-        n if n <. 0.5 ->
-          edge.orthogonal([edge.from(edge.0, edge.1), edge.to(edge.2, edge.3)])
-        _ -> edge.bezier([edge.from(edge.0, edge.1), edge.to(edge.2, edge.3)])
-      }
-
-      #(key, html)
-    }),
-
-    keyed.fragment({
-      use node <- list.map(model.nodes)
-      let html = view_node(node.id, node.x, node.y, node.params)
-
-      #(node.id, html)
-    }),
-  ])
-}
-
-fn view_node(id: String, x: Float, y: Float, params: NodeParams) -> Element(Msg) {
-  node.root(
+  html.div(
     [
-      attribute.id(id),
-      node.initial_x(x),
-      node.initial_y(y),
-      attribute.class("flex flex-col bg-white shadow *:px-2 *:py-2"),
+      attribute.class("p-12 w-screen h-screen bg-gray-50"),
     ],
-    case params {
-      Osc(..) -> [
-        html.header([attribute.class("bg-pink-50 rounded-t")], [
-          html.p([attribute.class("font-semibold text-pink-500")], [
-            html.text("Oscillator"),
-          ]),
-        ]),
-        html.div([], [
-          html.label([], [
-            html.p([attribute.class("flex gap-1 items-center")], [
-              handle.root(
+    [
+      viewport.root(
+        [attribute.class("w-full h-full bg-white rounded-lg shadow")],
+        [
+          edge_renderer.root(
+            [],
+            list.map(model.edges, fn(edge) {
+              edge.root(
                 [
-                  attribute.name("freq"),
-                  attribute.class("-ml-3 bg-pink-500 rounded-full size-2"),
+                  edge.from(edge.source.0, edge.source.1),
+                  edge.to(edge.target.0, edge.target.1),
+                  edge.kind("bezier"),
                 ],
-                [],
-              ),
-
-              html.text("Freq"),
-            ]),
-
-            html.input([
-              attribute.type_("range"),
-              attribute.min("20"),
-              attribute.max("2000"),
-              attribute.value(float.to_string(params.frequency)),
-              attribute.class("w-full"),
-              node.nodrag(),
-            ]),
-          ]),
-        ]),
-        html.footer([], [
-          html.p([attribute.class("flex gap-1 justify-end items-center")], [
-            html.text("Out"),
-
-            handle.root(
-              [
-                attribute.name("out"),
-                attribute.class("-mr-3 bg-pink-500 rounded-full size-2"),
-              ],
-              [],
-            ),
-          ]),
-        ]),
-      ]
-
-      Amp(..) -> [
-        html.header([attribute.class("bg-green-50 rounded-t")], [
-          html.p([attribute.class("font-semibold text-green-500")], [
-            html.text("Oscillator"),
-          ]),
-        ]),
-        html.div([], [
-          html.p([attribute.class("flex gap-1 items-center")], [
-            handle.root(
-              [
-                attribute.name("in"),
-                attribute.class("-ml-3 bg-green-500 rounded-full size-2"),
-              ],
-              [],
-            ),
-
-            html.text("In"),
-          ]),
-
-          html.label([], [
-            html.p([attribute.class("flex gap-1 items-center")], [
-              handle.root(
                 [
-                  attribute.name("gain"),
-                  attribute.class("-ml-3 bg-green-500 rounded-full size-2"),
+                  html.p(
+                    [
+                      attribute.class("px-1 text-xs bg-yellow-300 rounded"),
+                    ],
+                    [html.text(edge.source.0 <> " → " <> edge.target.0)],
+                  ),
                 ],
-                [],
-              ),
-
-              html.text("Gain"),
-            ]),
-
-            html.input([
-              attribute.type_("range"),
-              attribute.min("0"),
-              attribute.max("1"),
-              attribute.step("0.01"),
-              attribute.value(float.to_string(params.gain)),
-              attribute.class("w-full"),
-              node.nodrag(),
-            ]),
-          ]),
-        ]),
-        html.footer([], [
-          html.p([attribute.class("flex gap-1 justify-end items-center")], [
-            html.text("Out"),
-            handle.root(
+              )
+            }),
+          ),
+          ..list.map(model.nodes, fn(node) {
+            node.root(
               [
-                attribute.name("out"),
-                attribute.class("-mr-3 bg-green-500 rounded-full size-2"),
+                attribute.id(node.id),
+                node.initial_x(node.x),
+                node.initial_y(node.y),
               ],
-              [],
-            ),
-          ]),
-        ]),
-      ]
-    },
+              [
+                html.div(
+                  [
+                    attribute.class(
+                      "flex relative items-center py-1 px-2 rounded border aspect-square",
+                    ),
+                  ],
+                  [
+                    handle.root(
+                      [
+                        attribute.name("input"),
+                        attribute.class(
+                          "absolute left-0 top-1/4 bg-black rounded-full -translate-x-1/2 size-2",
+                        ),
+                      ],
+                      [],
+                    ),
+                    html.text(node.label),
+                    handle.root(
+                      [
+                        attribute.name("output"),
+                        attribute.class(
+                          "absolute right-0 top-3/4 bg-black rounded-full translate-x-1/2 size-2",
+                        ),
+                      ],
+                      [],
+                    ),
+                  ],
+                ),
+              ],
+            )
+          })
+        ],
+      ),
+    ],
   )
 }

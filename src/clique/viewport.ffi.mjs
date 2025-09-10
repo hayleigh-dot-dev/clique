@@ -66,7 +66,7 @@ export const observe_node = (resize_observer, node) => {
   resize_observer.observe(node);
 };
 
-export const add_window_mousemove_listener = (callback, handle_mouseup) => {
+export const add_window_mousemove_listener = (handle_mouseup, callback) => {
   window.addEventListener("mousemove", callback);
   window.addEventListener(
     "mouseup",

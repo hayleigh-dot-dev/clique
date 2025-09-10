@@ -1,9 +1,3 @@
-// IMPORTS ---------------------------------------------------------------------
-
-import gleam/json.{type Json}
-import lustre/effect.{type Effect}
-import lustre/event
-
 // TYPES -----------------------------------------------------------------------
 
 pub type Prop(a) {
@@ -50,16 +44,9 @@ pub fn uncontrolled(prop: Prop(a), value: a) -> Prop(a) {
 
 ///
 ///
-pub fn update(
-  prop: Prop(a),
-  event: String,
-  to_json: fn(a) -> Json,
-  value: a,
-) -> #(Prop(a), Effect(msg)) {
-  let effect = event.emit(event, to_json(value))
-
+pub fn update(prop: Prop(a), value: a) -> Prop(a) {
   case prop.state {
-    Unchanged | Touched -> #(Prop(value:, state: Touched), effect)
-    Controlled -> #(prop, effect)
+    Unchanged | Touched -> Prop(value:, state: Touched)
+    Controlled -> prop
   }
 }

@@ -1,12 +1,12 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import clique/internal/dom.{type HtmlElement}
-import clique/internal/handles.{type Handles}
+import clique/internal/drag.{type DragState}
+import clique/internal/events
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/float
-import gleam/function
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -57,50 +57,51 @@ pub fn front() -> Attribute(msg) {
 
 // CONTEXT ---------------------------------------------------------------------
 
-fn provide_transform(transform: Transform) -> Effect(msg) {
-  effect.provide("clique/transform", {
-    json.object([
-      #("translate_x", json.float(transform.translate_x)),
-      #("translate_y", json.float(transform.translate_y)),
-      #("scale", json.float(transform.scale)),
-    ])
-  })
+fn provide_scale(scale: Float) -> Effect(msg) {
+  effect.provide("clique/transform", json.float(scale))
 }
 
 @internal
-pub fn on_transform_change(
-  handler: fn(Transform) -> msg,
-) -> component.Option(msg) {
+pub fn on_scale_change(handler: fn(Float) -> msg) -> component.Option(msg) {
   component.on_context_change("clique/transform", {
-    use translate_x <- decode.field("translate_x", decode.float)
-    use translate_y <- decode.field("translate_y", decode.float)
-    use scale <- decode.field("scale", decode.float)
-
-    decode.success(handler(Transform(translate_x:, translate_y:, scale:)))
+    use scale <- decode.then(decode.float)
+    decode.success(handler(scale))
   })
 }
 
 fn provide_handles(
   handles: Dict(String, Dict(String, #(Float, Float))),
 ) -> Effect(Msg) {
-  effect.provide("clique/handles", {
-    json.dict(handles, function.identity, {
-      json.dict(_, function.identity, fn(position: #(Float, Float)) {
-        json.preprocessed_array([
-          json.float(position.0),
-          json.float(position.1),
-        ])
-      })
-    })
-  })
+  effect.provide(
+    "clique/handles",
+    json.object({
+      use fields, node, handles <- dict.fold(handles, [])
+      use fields, handle, position <- dict.fold(handles, fields)
+      let field = #(
+        node <> "." <> handle,
+        json.array([position.0, position.1], json.float),
+      )
+
+      [field, ..fields]
+    }),
+  )
 }
 
 @internal
-pub fn on_handles_change(handler: fn(Handles) -> msg) -> component.Option(msg) {
+pub fn on_handles_change(
+  handler: fn(Dict(String, #(Float, Float))) -> msg,
+) -> component.Option(msg) {
   component.on_context_change("clique/handles", {
-    decode.dynamic
-    |> decode.map(handles.unsafe_from_dynamic)
-    |> decode.map(handler)
+    use handles <- decode.then(
+      decode.dict(decode.string, {
+        use x <- decode.field(0, decode.float)
+        use y <- decode.field(1, decode.float)
+
+        decode.success(#(x, y))
+      }),
+    )
+
+    decode.success(handler(handles))
   })
 }
 
@@ -109,12 +110,9 @@ pub fn on_handles_change(handler: fn(Handles) -> msg) -> component.Option(msg) {
 type Model {
   Model(
     transform: Transform,
-    drag: #(Float, Float),
     observer: Option(NodeResizeObserver),
     handles: Dict(String, Dict(String, #(Float, Float))),
-    last_pan_velocity: #(Float, Float),
-    is_panning: Bool,
-    inertia_id: Option(Int),
+    panning: DragState,
   )
 }
 
@@ -128,16 +126,13 @@ fn init(_) -> #(Model, Effect(Msg)) {
   let model =
     Model(
       transform: Transform(translate_x: 0.0, translate_y: 0.0, scale: 1.0),
-      drag: #(0.0, 0.0),
       observer: None,
       handles: dict.new(),
-      last_pan_velocity: #(0.0, 0.0),
-      is_panning: False,
-      inertia_id: None,
+      panning: drag.Settled,
     )
   let effect =
     effect.batch([
-      provide_transform(model.transform),
+      provide_scale(model.transform.scale),
       provide_handles(model.handles),
       add_resize_observer(),
     ])
@@ -168,26 +163,26 @@ fn options() -> List(component.Option(Msg)) {
 // UPDATE ----------------------------------------------------------------------
 
 type Msg {
-  NodeMounted(element: HtmlElement)
-  NodeMoved(id: String, dx: Float, dy: Float)
+  NodeMounted(id: String, element: HtmlElement)
+  NodeMoved(id: String, x: Float, y: Float, dx: Float, dy: Float)
   NodeResizeObserverStarted(observer: NodeResizeObserver)
   NodesResized(changes: List(#(String, String, Float, Float)))
   UserPannedViewport(x: Float, y: Float)
   UserStartedPanning(x: Float, y: Float)
   UserStoppedPanning
   UserZoomedViewport(x: Float, y: Float, delta: Float)
-  InertiaFrame(timestamp: Float, vx: Float, vy: Float, id: Int)
+  InertiaSimulationTicked
 }
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
-    NodeMounted(element:) ->
+    NodeMounted(id: _, element:) ->
       case model.observer {
         Some(observer) -> #(model, observe_node(observer, element))
         None -> #(model, effect.none())
       }
 
-    NodeMoved(id: node, dx:, dy:) ->
+    NodeMoved(id: node, x: _, y: _, dx:, dy:) ->
       case dict.get(model.handles, node) {
         Ok(node_handles) -> {
           let handles =
@@ -232,98 +227,45 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     }
 
     UserPannedViewport(x:, y:) -> {
-      let dx = x -. model.drag.0
-      let dy = y -. model.drag.1
-      let drag = #(x, y)
-      let transform =
-        Transform(
-          ..model.transform,
-          translate_x: model.transform.translate_x +. dx,
-          translate_y: model.transform.translate_y +. dy,
-        )
+      let #(panning, dx, dy) = drag.update(model.panning, x, y)
+      let translate_x = model.transform.translate_x +. dx
+      let translate_y = model.transform.translate_y +. dy
+      let transform = Transform(..model.transform, translate_x:, translate_y:)
 
-      // Store velocity for inertia (scaled for smooth feel)
-      let last_pan_velocity = #(dx *. 0.8, dy *. 0.8)
-
-      let model = Model(..model, transform:, drag:, last_pan_velocity:)
-      let effect = provide_transform(transform)
+      let model = Model(..model, transform:, panning:)
+      let effect = effect.none()
 
       #(model, effect)
     }
 
     UserStartedPanning(x:, y:) -> {
-      let drag = #(x, y)
-      let model =
-        Model(
-          ..model,
-          drag:,
-          last_pan_velocity: #(0.0, 0.0),
-          is_panning: True,
-          inertia_id: None,
-        )
+      let model = Model(..model, panning: drag.start(x, y))
       let effect = add_window_mousemove_listener()
 
       #(model, effect)
     }
 
     UserStoppedPanning -> {
-      let model = Model(..model, is_panning: False)
+      let #(panning, effect) = drag.stop(model.panning, InertiaSimulationTicked)
+      let model = Model(..model, panning:)
 
-      // Use last pan velocity for inertia
-      let #(vx, vy) = model.last_pan_velocity
-      let velocity_magnitude =
-        float.absolute_value(vx) +. float.absolute_value(vy)
-
-      case velocity_magnitude >. 0.5 {
-        True -> {
-          let inertia_id = generate_inertia_id()
-          let updated_model = Model(..model, inertia_id: Some(inertia_id))
-          let effect = start_inertia_animation(vx, vy, inertia_id)
-          #(updated_model, effect)
-        }
-        False -> #(model, effect.none())
-      }
+      #(model, effect)
     }
 
-    InertiaFrame(timestamp: _, vx:, vy:, id:) -> {
-      case model.inertia_id {
-        Some(current_id) if current_id == id && !model.is_panning -> {
-          // Apply strong friction for faster stop
-          let friction = 0.85
-          let new_vx = vx *. friction
-          let new_vy = vy *. friction
+    InertiaSimulationTicked -> {
+      let #(panning, vx, vy, effect) =
+        drag.tick(model.panning, InertiaSimulationTicked)
 
-          // Stop if velocity is too low
-          let min_velocity = 0.2
-          case
-            float.absolute_value(new_vx) <. min_velocity
-            && float.absolute_value(new_vy) <. min_velocity
-          {
-            True -> {
-              let model = Model(..model, inertia_id: None)
-              #(model, effect.none())
-            }
-            False -> {
-              // Update transform
-              let transform =
-                Transform(
-                  ..model.transform,
-                  translate_x: model.transform.translate_x +. new_vx,
-                  translate_y: model.transform.translate_y +. new_vy,
-                )
-              let model = Model(..model, transform:)
-              let effect =
-                effect.batch([
-                  provide_transform(transform),
-                  continue_inertia_animation(new_vx, new_vy, id),
-                ])
-              #(model, effect)
-            }
-          }
-        }
-        _ -> #(model, effect.none())
-        // Inertia was cancelled or wrong ID
-      }
+      let transform =
+        Transform(
+          ..model.transform,
+          translate_x: model.transform.translate_x +. vx,
+          translate_y: model.transform.translate_y +. vy,
+        )
+
+      let model = Model(..model, transform:, panning:)
+
+      #(model, effect)
     }
 
     UserZoomedViewport(x:, y:, delta:) -> {
@@ -331,6 +273,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         True -> 1.1
         False -> 1.0 /. 1.1
       }
+
       let min_scale = 0.1
       let max_scale = 5.0
       let new_scale = model.transform.scale *. zoom_factor
@@ -357,7 +300,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           scale: clamped_scale,
         )
       let model = Model(..model, transform:)
-      let effect = provide_transform(transform)
+      let effect = provide_scale(transform.scale)
 
       #(model, effect)
     }
@@ -391,24 +334,6 @@ fn do_add_window_mousemove_listener(
   callback: fn(Dynamic) -> Nil,
 ) -> Nil
 
-fn start_inertia_animation(vx: Float, vy: Float, id: Int) -> Effect(Msg) {
-  use dispatch <- effect.from
-  use new_timestamp <- do_request_animation_frame
-  dispatch(InertiaFrame(timestamp: new_timestamp, vx:, vy:, id:))
-}
-
-fn continue_inertia_animation(vx: Float, vy: Float, id: Int) -> Effect(Msg) {
-  use dispatch <- effect.from
-  use new_timestamp <- do_request_animation_frame
-  dispatch(InertiaFrame(timestamp: new_timestamp, vx:, vy:, id:))
-}
-
-@external(javascript, "./viewport.ffi.mjs", "request_animation_frame")
-fn do_request_animation_frame(callback: fn(Float) -> Nil) -> Nil
-
-@external(javascript, "./viewport.ffi.mjs", "generate_inertia_id")
-fn generate_inertia_id() -> Int
-
 fn observe_node(
   observer: NodeResizeObserver,
   element: HtmlElement,
@@ -423,19 +348,6 @@ fn do_observe_node(observer: NodeResizeObserver, node: HtmlElement) -> Nil
 // VIEW ------------------------------------------------------------------------
 
 fn view(model: Model) -> Element(Msg) {
-  let handle_node_mount = {
-    use target <- decode.field("target", dom.element_decoder())
-    decode.success(NodeMounted(element: target))
-  }
-
-  let handle_node_drag = {
-    use id <- decode.subfield(["target", "id"], decode.string)
-    use dx <- decode.subfield(["detail", "dx"], decode.float)
-    use dy <- decode.subfield(["detail", "dy"], decode.float)
-
-    decode.success(NodeMoved(id:, dx:, dy:))
-  }
-
   element.fragment([
     html.style([], {
       "
@@ -484,10 +396,7 @@ fn view(model: Model) -> Element(Msg) {
       component.named_slot("behind", [], []),
       view_viewport(model.transform, [
         component.default_slot(
-          [
-            event.on("clique:mount", handle_node_mount),
-            event.on("clique:drag", handle_node_drag),
-          ],
+          [events.on_node_mount(NodeMounted), events.on_node_drag(NodeMoved)],
           [],
         ),
       ]),
