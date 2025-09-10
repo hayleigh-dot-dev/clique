@@ -274,8 +274,8 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         False -> 1.0 /. 1.1
       }
 
-      let min_scale = 0.1
-      let max_scale = 5.0
+      let min_scale = 0.5
+      let max_scale = 2.0
       let new_scale = model.transform.scale *. zoom_factor
       let clamped_scale = case new_scale {
         s if s <. min_scale -> min_scale
@@ -380,14 +380,19 @@ fn view(model: Model) -> Element(Msg) {
       }
 
       #viewport {
-          position: absolute;
-          width: 100%;
+          -moz-osx-font-smoothing: grayscale;
+          -webkit-font-smoothing: antialiased;
+          contain: layout style;
           height: 100%;
+          image-rendering: -webkit-optimize-contrast;
+          image-rendering: crisp-edges;
+          isolation: isolate;
+          overflow: visible;
+          position: absolute;
+          text-rendering: optimizeLegibility;
           transform-origin: 0 0;
           transition: none;
-          overflow: visible;
-          contain: layout style;
-          isolation: isolate;
+          width: 100%;
       }
       "
     }),
