@@ -67,22 +67,27 @@ export const observe_node = (resize_observer, node) => {
 };
 
 export const add_window_mousemove_listener = (handle_mouseup, callback) => {
+  const style = document.createElement("style");
+
+  style.textContent = `
+    * {
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      -moz-user-select: none !important;
+      -ms-user-select: none !important;
+    }
+  `;
+
+  document.head.appendChild(style);
+
   window.addEventListener("mousemove", callback);
   window.addEventListener(
     "mouseup",
     () => {
+      document.head.removeChild(style);
       window.removeEventListener("mousemove", callback);
       handle_mouseup();
     },
     { once: true },
   );
-};
-
-export const request_animation_frame = (callback) => {
-  requestAnimationFrame(callback);
-};
-
-let inertiaIdCounter = 0;
-export const generate_inertia_id = () => {
-  return ++inertiaIdCounter;
 };
