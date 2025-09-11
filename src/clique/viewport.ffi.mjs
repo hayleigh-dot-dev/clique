@@ -1,5 +1,13 @@
 import { List } from "../gleam.mjs";
 
+export const set_transform = (shadow_root, value) => {
+  const viewport = shadow_root.querySelector("#viewport");
+
+  if (viewport) {
+    viewport.style.transform = value;
+  }
+};
+
 export const add_resize_observer = (shadow_root, callback) => {
   const viewportRef = new WeakRef(shadow_root.querySelector("#viewport"));
 

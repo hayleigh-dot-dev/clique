@@ -133,6 +133,7 @@ fn init(_) -> #(Model, Effect(Msg)) {
   let effect =
     effect.batch([
       provide_scale(model.transform.scale),
+      set_transform(model.transform),
       provide_handles(model.handles),
       add_resize_observer(),
     ])
@@ -233,7 +234,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       let transform = Transform(..model.transform, translate_x:, translate_y:)
 
       let model = Model(..model, transform:, panning:)
-      let effect = effect.none()
+      let effect = set_transform(transform)
 
       #(model, effect)
     }
@@ -264,6 +265,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         )
 
       let model = Model(..model, transform:, panning:)
+      let effect = effect.batch([effect, set_transform(transform)])
 
       #(model, effect)
     }
@@ -300,7 +302,8 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           scale: clamped_scale,
         )
       let model = Model(..model, transform:)
-      let effect = provide_scale(transform.scale)
+      let effect =
+        effect.batch([provide_scale(transform.scale), set_transform(transform)])
 
       #(model, effect)
     }
@@ -308,6 +311,20 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 }
 
 // EFFECTS ---------------------------------------------------------------------
+
+fn set_transform(transform: Transform) -> Effect(Msg) {
+  use _, shadow_root <- effect.before_paint
+  let translate =
+    "translate(${x}px, ${y}px) scale(${scale})"
+    |> string.replace("${x}", float.to_string(transform.translate_x))
+    |> string.replace("${y}", float.to_string(transform.translate_y))
+    |> string.replace("${scale}", float.to_string(transform.scale))
+
+  do_set_transform(shadow_root, translate)
+}
+
+@external(javascript, "./viewport.ffi.mjs", "set_transform")
+fn do_set_transform(shadow_root: Dynamic, value: String) -> Nil
 
 fn add_window_mousemove_listener() -> Effect(Msg) {
   use dispatch <- effect.from
@@ -347,7 +364,7 @@ fn do_observe_node(observer: NodeResizeObserver, node: HtmlElement) -> Nil
 
 // VIEW ------------------------------------------------------------------------
 
-fn view(model: Model) -> Element(Msg) {
+fn view(_) -> Element(Msg) {
   element.fragment([
     html.style([], {
       "
@@ -399,7 +416,7 @@ fn view(model: Model) -> Element(Msg) {
 
     view_container([
       component.named_slot("behind", [], []),
-      view_viewport(model.transform, [
+      view_viewport([
         component.default_slot(
           [events.on_node_mount(NodeMounted), events.on_node_drag(NodeMoved)],
           [],
@@ -482,18 +499,6 @@ fn view_container(children: List(Element(Msg))) -> Element(Msg) {
 
 // VIEW VIEWPORT ---------------------------------------------------------------
 
-fn view_viewport(
-  transform: Transform,
-  children: List(Element(Msg)),
-) -> Element(Msg) {
-  let translate =
-    "translate(${x}px, ${y}px) scale(${scale})"
-    |> string.replace("${x}", float.to_string(transform.translate_x))
-    |> string.replace("${y}", float.to_string(transform.translate_y))
-    |> string.replace("${scale}", float.to_string(transform.scale))
-
-  html.div(
-    [attribute.id("viewport"), attribute.style("transform", translate)],
-    children,
-  )
+fn view_viewport(children: List(Element(Msg))) -> Element(Msg) {
+  html.div([attribute.id("viewport")], children)
 }
