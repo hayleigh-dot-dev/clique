@@ -1,12 +1,11 @@
 // IMPORTS ---------------------------------------------------------------------
 
+import clique
 import clique/edge
-import clique/edge_renderer
-import clique/handle
 import clique/node
-import clique/viewport
 import gleam/int
 import gleam/list
+import gleam/string
 import lustre
 import lustre/attribute
 import lustre/element.{type Element}
@@ -17,11 +16,7 @@ import lustre/element/html
 pub fn main() {
   let app = lustre.simple(init:, update:, view:)
 
-  let assert Ok(_) = viewport.register()
-  let assert Ok(_) = node.register()
-  let assert Ok(_) = edge.register()
-  let assert Ok(_) = edge_renderer.register()
-  let assert Ok(_) = handle.register()
+  let assert Ok(_) = clique.register()
   let assert Ok(_) = lustre.start(app, "#app", Nil)
 
   Nil
@@ -49,8 +44,8 @@ fn init(_) -> Model {
     |> list.map(fn(i) {
       Node(
         id: "node-" <> int.to_string(i),
-        x: int.to_float({ i % 20 } * 300),
-        y: int.to_float({ i / 20 } * 400),
+        x: int.to_float({ i % 10 } * 300),
+        y: int.to_float({ i / 10 } * 100),
         label: "Node " <> int.to_string(i + 1),
       )
     })
@@ -80,72 +75,64 @@ fn update(model: Model, _msg: Msg) -> Model {
 fn view(model: Model) -> Element(Msg) {
   html.div(
     [
-      attribute.class("p-12 w-screen h-screen bg-gray-50"),
+      attribute.class("p-24 w-screen h-screen bg-gray-100"),
     ],
     [
-      viewport.root(
-        [attribute.class("w-full h-full bg-white rounded-lg shadow")],
-        [
-          edge_renderer.root(
-            [],
-            list.map(model.edges, fn(edge) {
-              edge.root(
-                [
-                  edge.from(edge.source.0, edge.source.1),
-                  edge.to(edge.target.0, edge.target.1),
-                  edge.kind("bezier"),
-                ],
-                [
-                  html.p(
-                    [
-                      attribute.class("px-1 text-xs bg-yellow-300 rounded"),
-                    ],
-                    [html.text(edge.source.0 <> " → " <> edge.target.0)],
-                  ),
-                ],
-              )
-            }),
-          ),
-          ..list.map(model.nodes, fn(node) {
-            node.root(
+      clique.root(
+        [attribute.class("w-full h-full bg-white rounded-lg shadow-md")],
+        list.map(model.edges, fn(edge) {
+          let key =
+            string.join(
+              [edge.source.0, edge.source.1, edge.target.0, edge.target.1],
+              ".",
+            )
+
+          let html =
+            clique.edge(edge.source, edge.target, [edge.bezier()], [
+              html.p([attribute.class("px-1 text-xs bg-yellow-300 rounded")], [
+                html.text(edge.source.0 <> " → " <> edge.target.0),
+              ]),
+            ])
+
+          #(key, html)
+        }),
+        list.map(model.nodes, fn(node) {
+          let key = node.id
+
+          let html =
+            clique.node(
+              node.id,
               [
-                attribute.id(node.id),
                 node.initial_x(node.x),
                 node.initial_y(node.y),
+                attribute.class("bg-pink-50 rounded border-2 border-pink-500"),
               ],
               [
                 html.div(
                   [
                     attribute.class(
-                      "flex relative items-center py-1 px-2 rounded border aspect-square",
+                      "flex relative items-center py-1 px-2 aspect-square",
                     ),
                   ],
                   [
-                    handle.root(
-                      [
-                        attribute.name("input"),
-                        attribute.class(
-                          "absolute left-0 top-1/4 bg-black rounded-full -translate-x-1/2 size-2",
-                        ),
-                      ],
-                      [],
-                    ),
+                    clique.handle("input", [
+                      attribute.class(
+                        "absolute left-0 top-1/4 bg-black rounded-full -translate-x-1/2 size-2",
+                      ),
+                    ]),
                     html.text(node.label),
-                    handle.root(
-                      [
-                        attribute.name("output"),
-                        attribute.class(
-                          "absolute right-0 top-3/4 bg-black rounded-full translate-x-1/2 size-2",
-                        ),
-                      ],
-                      [],
-                    ),
+                    clique.handle("output", [
+                      attribute.class(
+                        "absolute right-0 top-3/4 bg-black rounded-full translate-x-1/2 size-2",
+                      ),
+                    ]),
                   ],
                 ),
               ],
             )
-          })
-        ],
+
+          #(key, html)
+        }),
       ),
     ],
   )
