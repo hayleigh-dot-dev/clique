@@ -44,7 +44,19 @@ pub fn to(node: String, handle: String) -> Attribute(msg) {
   attribute("to", node <> "." <> handle)
 }
 
-pub fn kind(value: String) -> Attribute(msg) {
+pub fn bezier() -> Attribute(msg) {
+  attribute("type", "bezier")
+}
+
+pub fn linear() -> Attribute(msg) {
+  attribute("type", "linear")
+}
+
+pub fn step() -> Attribute(msg) {
+  attribute("type", "step")
+}
+
+pub fn custom(value: String) -> Attribute(msg) {
   attribute("type", value)
 }
 
