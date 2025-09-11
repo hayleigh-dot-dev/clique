@@ -270,8 +270,8 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     UserZoomedViewport(x:, y:, delta:) -> {
       let zoom_factor = case delta >. 0.0 {
-        True -> 1.1
-        False -> 1.0 /. 1.1
+        True -> 1.0 +. { delta *. 0.01 }
+        False -> 1.0 /. { 1.0 +. { float.absolute_value(delta) *. 0.01 } }
       }
 
       let min_scale = 0.5
