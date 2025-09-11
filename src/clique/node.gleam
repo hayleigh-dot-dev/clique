@@ -71,7 +71,7 @@ fn init(_) -> #(Model, Effect(Msg)) {
 
   let effect =
     effect.batch([
-      set_css_position(model.position),
+      set_transform(model.position),
       effect.after_paint(fn(dispatch, _) { dispatch(BrowserPainted) }),
     ])
 
@@ -146,7 +146,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         effect.batch([
           inertia_effect,
           events.emit_node_drag(x, y, dx, dy),
-          set_css_position(model.position),
+          set_transform(model.position),
         ])
 
       #(model, effect)
@@ -163,7 +163,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       let position =
         prop.uncontrolled(model.position, #(value, model.position.value.1))
       let model = Model(..model, position:)
-      let effect = set_css_position(model.position)
+      let effect = set_transform(model.position)
 
       #(model, effect)
     }
@@ -172,7 +172,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       let position =
         prop.uncontrolled(model.position, #(model.position.value.0, value))
       let model = Model(..model, position:)
-      let effect = set_css_position(model.position)
+      let effect = set_transform(model.position)
 
       #(model, effect)
     }
@@ -180,7 +180,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     ParentUpdatedX(value:) -> {
       let position = prop.controlled(#(value, model.position.value.1))
       let model = Model(..model, position:)
-      let effect = set_css_position(model.position)
+      let effect = set_transform(model.position)
 
       #(model, effect)
     }
@@ -188,7 +188,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     ParentUpdatedY(value:) -> {
       let position = prop.controlled(#(model.position.value.0, value))
       let model = Model(..model, position:)
-      let effect = set_css_position(model.position)
+      let effect = set_transform(model.position)
 
       #(model, effect)
     }
@@ -208,7 +208,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       let effect =
         effect.batch([
           events.emit_node_drag(x, y, dx, dy),
-          set_css_position(position),
+          set_transform(position),
         ])
 
       #(model, effect)
@@ -241,7 +241,8 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
 // EFFECTS ---------------------------------------------------------------------
 
-fn set_css_position(position: Prop(#(Float, Float))) -> Effect(msg) {
+fn set_transform(position: Prop(#(Float, Float))) -> Effect(msg) {
+  use _, shadow_root <- effect.before_paint
   let transform =
     "translate("
     <> float.to_string(position.value.0)
@@ -249,16 +250,11 @@ fn set_css_position(position: Prop(#(Float, Float))) -> Effect(msg) {
     <> float.to_string(position.value.1)
     <> "px)"
 
-  set_css_property("transform", transform)
+  do_set_transform(shadow_root, transform)
 }
 
-fn set_css_property(name: String, value: String) -> Effect(msg) {
-  use _, shadow_root <- effect.before_paint
-  do_set_css_property(shadow_root, name, value)
-}
-
-@external(javascript, "./node.ffi.mjs", "set_css_property")
-fn do_set_css_property(shadow_root: Dynamic, name: String, value: String) -> Nil
+@external(javascript, "./node.ffi.mjs", "set_transform")
+fn do_set_transform(shadow_root: Dynamic, value: String) -> Nil
 
 fn add_window_mousemove_listener() -> Effect(Msg) {
   use dispatch <- effect.from

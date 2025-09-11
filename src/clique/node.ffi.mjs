@@ -1,8 +1,8 @@
-export const set_css_property = (shadow_root, property, value) => {
+export const set_transform = (shadow_root, value) => {
   const host = shadow_root.host;
 
   if (host) {
-    host.style.setProperty(property, value);
+    host.style.transform = value;
   }
 };
 
