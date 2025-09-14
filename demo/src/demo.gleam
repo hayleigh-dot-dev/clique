@@ -1,11 +1,12 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import clique
+import clique/background
 import clique/edge
+import clique/handle
 import clique/node
 import gleam/int
 import gleam/list
-import gleam/string
 import lustre
 import lustre/attribute
 import lustre/element.{type Element}
@@ -33,10 +34,10 @@ type Node {
 }
 
 type Edge {
-  Edge(source: #(String, String), target: #(String, String))
+  Edge(id: String, source: #(String, String), target: #(String, String))
 }
 
-const count = 100
+const count = 50
 
 fn init(_) -> Model {
   let nodes =
@@ -44,19 +45,26 @@ fn init(_) -> Model {
     |> list.map(fn(i) {
       Node(
         id: "node-" <> int.to_string(i),
-        x: int.to_float({ i % 10 } * 300),
-        y: int.to_float({ i / 10 } * 100),
-        label: "Node " <> int.to_string(i + 1),
+        x: int.to_float({ i % 2 } * 300),
+        y: int.to_float({ i / 2 } * 100),
+        label: "Node " <> int.to_string(i),
       )
     })
 
   let edges =
-    list.range(0, count - 2)
-    |> list.map(fn(i) {
-      Edge(source: #("node-" <> int.to_string(i), "output"), target: #(
-        "node-" <> int.to_string({ i + 1 }),
-        "input",
-      ))
+    list.range(0, count / 4)
+    |> list.map(fn(_) {
+      let source_index = int.random(count - 1)
+      let target_index = int.random(count - 1)
+
+      Edge(
+        id: "edge-"
+          <> int.to_string(source_index)
+          <> "-"
+          <> int.to_string(target_index),
+        source: #("node-" <> int.to_string(source_index), "output"),
+        target: #("node-" <> int.to_string(target_index), "input"),
+      )
     })
 
   Model(nodes:, edges:)
@@ -64,76 +72,111 @@ fn init(_) -> Model {
 
 // UPDATE ----------------------------------------------------------------------
 
-type Msg
+type Msg {
+  NodeDragged(id: String, x: Float, y: Float)
+  UserConnectedNodes(source: #(String, String), target: #(String, String))
+}
 
-fn update(model: Model, _msg: Msg) -> Model {
-  model
+fn update(model: Model, msg: Msg) -> Model {
+  case msg {
+    NodeDragged(id:, x:, y:) -> {
+      let nodes =
+        list.map(model.nodes, fn(node) {
+          case node.id == id {
+            True -> Node(..node, x:, y:)
+            False -> node
+          }
+        })
+
+      Model(..model, nodes:)
+    }
+
+    UserConnectedNodes(source:, target:) -> {
+      let id = "edge-" <> source.0 <> "-" <> target.0
+      let edges = [Edge(id:, source:, target:), ..model.edges]
+
+      Model(..model, edges:)
+    }
+  }
 }
 
 // VIEW ------------------------------------------------------------------------
 
 fn view(model: Model) -> Element(Msg) {
-  html.div(
-    [
-      attribute.class("p-24 w-screen h-screen bg-gray-100"),
-    ],
-    [
-      clique.root(
-        [attribute.class("w-full h-full bg-white rounded-lg shadow-md")],
-        list.map(model.edges, fn(edge) {
-          let key =
-            string.join(
-              [edge.source.0, edge.source.1, edge.target.0, edge.target.1],
-              ".",
-            )
+  html.div([attribute.class("p-24 w-screen h-screen font-mono")], [
+    clique.root(
+      [
+        attribute.class("w-full h-full bg-white rounded-lg shadow-md"),
+        handle.on_connection_complete(UserConnectedNodes),
+      ],
+      [
+        clique.background([
+          background.lines(),
+          attribute.class("text-pink-100 bg-slate-50"),
+          background.gap(50.0, 50.0),
+        ]),
 
-          let html =
-            clique.edge(edge.source, edge.target, [edge.bezier()], [
-              html.p([attribute.class("px-1 text-xs bg-yellow-300 rounded")], [
-                html.text(edge.source.0 <> " → " <> edge.target.0),
-              ]),
-            ])
+        clique.background([
+          background.dots(),
+          attribute.class("text-pink-200"),
+          background.size(2.0),
+          background.gap(50.0, 50.0),
+        ]),
 
-          #(key, html)
-        }),
-        list.map(model.nodes, fn(node) {
-          let key = node.id
-
-          let html =
-            clique.node(
-              node.id,
-              [
-                node.initial_x(node.x),
-                node.initial_y(node.y),
-                attribute.class("bg-pink-50 rounded border-2 border-pink-500"),
-              ],
-              [
-                html.div(
-                  [
-                    attribute.class(
-                      "flex relative items-center py-1 px-2 aspect-square",
-                    ),
-                  ],
-                  [
-                    clique.handle("input", [
-                      attribute.class(
-                        "absolute left-0 top-1/4 bg-black rounded-full -translate-x-1/2 size-2",
-                      ),
-                    ]),
-                    html.text(node.label),
-                    clique.handle("output", [
-                      attribute.class(
-                        "absolute right-0 top-3/4 bg-black rounded-full translate-x-1/2 size-2",
-                      ),
-                    ]),
-                  ],
-                ),
-              ],
-            )
+        clique.edges({
+          use Edge(id:, ..) as data <- list.map(model.edges)
+          let key = id
+          let html = view_edge(data)
 
           #(key, html)
         }),
-      ),
-    ],
-  )
+
+        clique.nodes({
+          use Node(id:, ..) as data <- list.map(model.nodes)
+          let key = id
+          let html = view_node(data, on_drag: NodeDragged)
+
+          #(key, html)
+        }),
+      ],
+    ),
+  ])
+}
+
+fn view_node(
+  data: Node,
+  on_drag handle_drag: fn(String, Float, Float) -> msg,
+) -> Element(msg) {
+  let attributes = [
+    node.position(data.x, data.y),
+    node.on_drag(fn(id, x, y, _, _) { handle_drag(id, x, y) }),
+    attribute.class("bg-pink-50 rounded border-2 border-pink-500"),
+  ]
+
+  clique.node(data.id, attributes, [
+    html.div(
+      [attribute.class("flex relative items-center py-1 px-2 aspect-square")],
+      [
+        clique.handle("input", [
+          attribute.class(
+            "absolute -left-1 top-1/4 bg-black rounded-full size-2",
+          ),
+        ]),
+        html.text(data.label),
+        clique.handle("output", [
+          attribute.class(
+            "absolute -right-1 top-3/4 bg-black rounded-full size-2",
+          ),
+        ]),
+      ],
+    ),
+  ])
+}
+
+fn view_edge(data: Edge) -> Element(msg) {
+  clique.edge(data.source, data.target, [edge.bezier()], [
+    html.p([attribute.class("px-1 text-xs bg-yellow-300 rounded")], [
+      html.text(data.source.0 <> " → " <> data.target.0),
+    ]),
+  ])
 }
