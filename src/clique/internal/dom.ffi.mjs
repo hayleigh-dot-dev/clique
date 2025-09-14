@@ -1,5 +1,4 @@
 import { List, Empty, Ok, Error } from "../../gleam.mjs";
-import { BoundingClientRect } from "./dom.mjs";
 
 //
 
@@ -35,16 +34,7 @@ export const children = (element) =>
 export const bounding_client_rect = (element) => {
   const rect = element.getBoundingClientRect();
 
-  return new BoundingClientRect(
-    rect.x,
-    rect.y,
-    rect.width,
-    rect.height,
-    rect.top,
-    rect.right,
-    rect.bottom,
-    rect.left,
-  );
+  return [rect.x, rect.y, rect.width, rect.height];
 };
 
 export const query_selector_all = (element, selector) =>
@@ -55,3 +45,19 @@ export const query_selector_all = (element, selector) =>
 export const is_event = (dynamic) => dynamic instanceof Event;
 
 //
+
+export const add_event_listener = (shadow_root, name, handler) => {
+  const host = shadow_root.host;
+
+  if (host) {
+    host.addEventListener(name, handler);
+  }
+};
+
+export const prevent_default = (event, yes) => {
+  if (yes) event.preventDefault();
+};
+
+export const stop_propagation = (event, yes) => {
+  if (yes) event.stopPropagation();
+};

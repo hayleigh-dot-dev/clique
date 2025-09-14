@@ -20,12 +20,26 @@ export const add_window_mousemove_listener = (callback, handle_mouseup) => {
 
   document.head.appendChild(style);
 
-  window.addEventListener("mousemove", callback);
+  let rafId = null;
+  let data = null;
+  let throttledCallback = (event) => {
+    data = event;
+
+    if (!rafId) {
+      rafId = window.requestAnimationFrame(() => {
+        callback(data);
+        rafId = data = null;
+      });
+    }
+  };
+
+  window.addEventListener("mousemove", throttledCallback, { passive: true });
   window.addEventListener(
     "mouseup",
     () => {
       document.head.removeChild(style);
-      window.removeEventListener("mousemove", callback);
+      rafId = data = null;
+      window.removeEventListener("mousemove", throttledCallback);
       handle_mouseup();
     },
     { once: true },

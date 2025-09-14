@@ -1,24 +1,47 @@
 // IMPORTS ---------------------------------------------------------------------
 
+import clique/bounds.{type Bounds}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode.{type Decoder}
+import lustre/effect.{type Effect}
+import lustre/event.{type Handler}
 
 // TYPES -----------------------------------------------------------------------
 
 pub type HtmlElement
 
-pub type BoundingClientRect {
-  BoundingClientRect(
-    x: Float,
-    y: Float,
-    width: Float,
-    height: Float,
-    top: Float,
-    right: Float,
-    bottom: Float,
-    left: Float,
-  )
+// EFFECTS ---------------------------------------------------------------------
+
+pub fn add_event_listener(
+  name: String,
+  decoder: Decoder(Handler(msg)),
+) -> Effect(msg) {
+  use dispatch, shadow_root <- effect.before_paint
+  use event <- do_add_event_listener(shadow_root, name)
+
+  case decode.run(event, decoder) {
+    Ok(handler) -> {
+      let _ = do_prevent_default(event, handler.prevent_default)
+      let _ = do_stop_propagation(event, handler.stop_propagation)
+
+      dispatch(handler.message)
+    }
+    Error(_) -> Nil
+  }
 }
+
+@external(javascript, "./dom.ffi.mjs", "add_event_listener")
+fn do_add_event_listener(
+  shadow_root: Dynamic,
+  name: String,
+  callback: fn(Dynamic) -> Nil,
+) -> Nil
+
+@external(javascript, "./dom.ffi.mjs", "prevent_default")
+fn do_prevent_default(event: Dynamic, yes: Bool) -> Nil
+
+@external(javascript, "./dom.ffi.mjs", "stop_propagation")
+fn do_stop_propagation(event: Dynamic, yes: Bool) -> Nil
 
 // ELEMENT PROPERTIES ----------------------------------------------------------
 
@@ -43,7 +66,7 @@ pub fn attribute(element: HtmlElement, name: String) -> Result(String, Nil) {
 fn do_attribute(_element: HtmlElement, _name: String) -> Result(String, Nil)
 
 @external(javascript, "./dom.ffi.mjs", "bounding_client_rect")
-pub fn bounding_client_rect(element: HtmlElement) -> BoundingClientRect
+pub fn bounding_client_rect(element: HtmlElement) -> Bounds
 
 @external(javascript, "./dom.ffi.mjs", "query_selector_all")
 pub fn query_selector_all(

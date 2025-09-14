@@ -8,17 +8,34 @@ export const set_transform = (shadow_root, value) => {
   }
 };
 
-export const add_resize_observer = (shadow_root, callback) => {
+export const add_resize_observer = (
+  shadow_root,
+  on_viewport_resize,
+  callback,
+) => {
   const viewportRef = new WeakRef(shadow_root.querySelector("#viewport"));
 
   let rafId = null;
   let pendingUpdates = new Map();
+  let viewportRect;
+
+  const viewportObserver = new ResizeObserver(([entry]) => {
+    viewportRect = entry.target.getBoundingClientRect();
+
+    on_viewport_resize([
+      viewportRect.x,
+      viewportRect.y,
+      viewportRect.width,
+      viewportRect.height,
+    ]);
+  });
+
+  viewportObserver.observe(viewportRef.deref());
 
   const processUpdates = () => {
     const viewport = viewportRef.deref();
     if (!viewport || pendingUpdates.size === 0) return;
 
-    const viewportRect = viewport.getBoundingClientRect();
     const scaleX = viewportRect.width / (viewport.clientWidth || 1);
     const scaleY = viewportRect.height / (viewport.clientHeight || 1);
 
@@ -88,12 +105,26 @@ export const add_window_mousemove_listener = (handle_mouseup, callback) => {
 
   document.head.appendChild(style);
 
-  window.addEventListener("mousemove", callback);
+  let rafId = null;
+  let data = null;
+  let throttledCallback = (event) => {
+    data = event;
+
+    if (!rafId) {
+      rafId = window.requestAnimationFrame(() => {
+        callback(data);
+        rafId = data = null;
+      });
+    }
+  };
+
+  window.addEventListener("mousemove", throttledCallback, { passive: true });
   window.addEventListener(
     "mouseup",
     () => {
       document.head.removeChild(style);
-      window.removeEventListener("mousemove", callback);
+      rafId = data = null;
+      window.removeEventListener("mousemove", throttledCallback);
       handle_mouseup();
     },
     { once: true },

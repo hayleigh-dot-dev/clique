@@ -62,10 +62,7 @@ pub fn stop(state: DragState, tick: msg) -> #(DragState, Effect(msg)) {
       let velocity_magnitude = vx_abs +. vy_abs
 
       case velocity_magnitude >. threshold {
-        True -> #(
-          Inertia(vx:, vy:),
-          effect.after_paint(fn(dispatch, _) { dispatch(tick) }),
-        )
+        True -> #(Inertia(vx:, vy:), on_animation_frame(tick))
         False -> #(Settled, effect.none())
       }
     }
@@ -87,15 +84,16 @@ pub fn tick(
 
       case vx_abs <. min_velocity && vy_abs <. min_velocity {
         True -> #(Settled, vx, vy, effect.none())
-        False -> #(
-          Inertia(vx:, vy:),
-          vx,
-          vy,
-          effect.after_paint(fn(dispatch, _) { dispatch(tick) }),
-        )
+        False -> #(Inertia(vx:, vy:), vx, vy, on_animation_frame(tick))
       }
     }
 
     Active(..) | Settled -> #(state, 0.0, 0.0, effect.none())
   }
+}
+
+fn on_animation_frame(handler: msg) -> Effect(msg) {
+  use dispatch, _ <- effect.after_paint
+
+  dispatch(handler)
 }

@@ -1,12 +1,16 @@
 // IMPORTS ---------------------------------------------------------------------
 
-import clique/internal/events
-import clique/internal/path
-import clique/viewport
+import clique/edge
+import clique/internal/context
+import clique/internal/dom
+import clique/path
+import clique/position
 import gleam/dict.{type Dict}
+import gleam/dynamic/decode
 import gleam/float
 import gleam/list
-import gleam/option.{type Option, None, Some}
+import gleam/result
+import gleam/string
 import lustre
 import lustre/attribute.{type Attribute, attribute}
 import lustre/component
@@ -15,6 +19,7 @@ import lustre/element.{type Element, element}
 import lustre/element/html
 import lustre/element/keyed
 import lustre/element/svg
+import lustre/event
 
 // COMPONENT -------------------------------------------------------------------
 
@@ -54,11 +59,12 @@ pub fn to_default_path(
   kind: String,
   from: #(Float, Float),
   to: #(Float, Float),
-) -> #(Float, Float, Element(msg)) {
+) -> #(String, Float, Float) {
   case kind {
-    "bezier" -> path.bezier(from, to)
-    "step" -> path.step(from, to)
-    "linear" | _ -> path.linear(from, to)
+    "bezier" ->
+      path.bezier(from.0, from.1, position.Right, to.0, to.1, position.Left)
+    "step" -> path.step(from.0, from.1, to.0, to.1)
+    "linear" | _ -> path.straight(from.0, from.1, to.0, to.1)
   }
 }
 
@@ -83,16 +89,22 @@ fn init(_) -> #(Model, Effect(Msg)) {
 }
 
 fn options() -> List(component.Option(Msg)) {
-  [viewport.on_handles_change(ParentProvidedHandles)]
+  [
+    component.adopt_styles(False),
+    context.on_handles_change(ParentProvidedHandles),
+  ]
 }
 
 // UPDATE ----------------------------------------------------------------------
 
 pub opaque type Msg {
   ParentProvidedHandles(handles: Dict(String, #(Float, Float)))
-  EdgeChanged(
-    prev: Option(#(String, String)),
-    next: Option(#(String, String, String)),
+  EdgeDisconnected(from: String, to: String)
+  EdgeConnected(from: String, to: String, kind: String)
+  EdgeReconnected(
+    prev: #(String, String),
+    next: #(String, String),
+    kind: String,
   )
   EdgesMounted(edges: List(#(String, String, String)))
 }
@@ -100,33 +112,32 @@ pub opaque type Msg {
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
     ParentProvidedHandles(handles) -> {
-      let model = Model(..model, handles: handles)
+      let model = Model(..model, handles:)
+
       #(model, effect.none())
     }
 
-    EdgeChanged(prev: Some(prev), next: None) -> {
+    EdgeDisconnected(from:, to:) -> {
+      let edges = dict.delete(model.edges, #(from, to))
+      let model = Model(..model, edges:)
+
+      #(model, effect.none())
+    }
+
+    EdgeConnected(from:, to:, kind:) -> {
+      let edges = dict.insert(model.edges, #(from, to), kind)
+      let model = Model(..model, edges:)
+
+      #(model, effect.none())
+    }
+
+    EdgeReconnected(prev:, next:, kind:) -> {
       let edges = dict.delete(model.edges, prev)
+      let edges = dict.insert(edges, next, kind)
       let model = Model(..model, edges:)
 
       #(model, effect.none())
     }
-
-    EdgeChanged(prev: None, next: Some(next)) -> {
-      let edges = dict.insert(model.edges, #(next.0, next.1), next.2)
-      let model = Model(..model, edges:)
-
-      #(model, effect.none())
-    }
-
-    EdgeChanged(prev: Some(prev), next: Some(next)) -> {
-      let edges = dict.delete(model.edges, prev)
-      let edges = dict.insert(edges, #(next.0, next.1), next.2)
-      let model = Model(..model, edges:)
-
-      #(model, effect.none())
-    }
-
-    EdgeChanged(prev: None, next: None) -> #(model, effect.none())
 
     EdgesMounted(edges) -> {
       let edges =
@@ -146,14 +157,25 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 fn view(
   model: Model,
   to_path: fn(String, #(Float, Float), #(Float, Float)) ->
-    #(Float, Float, Element(Msg)),
+    #(String, Float, Float),
 ) -> Element(Msg) {
   let #(positions, edges) =
     dict.fold(model.edges, #([], []), fn(acc, edge, kind) {
       case dict.get(model.handles, edge.0), dict.get(model.handles, edge.1) {
         Ok(from), Ok(to) -> {
           let key = edge.0 <> "-" <> edge.1
-          let #(cx, cy, path) = to_path(kind, from, to)
+          let #(path, cx, cy) = to_path(kind, from, to)
+          let path =
+            svg.path([
+              attribute("d", path),
+              attribute("fill", "none"),
+              attribute("stroke", "black"),
+              attribute("stroke-width", "2"),
+              attribute("shape-rendering", "geometricPrecision"),
+              attribute("stroke-linecap", "round"),
+              attribute("stroke-linejoin", "round"),
+              attribute("vector-effect", "non-scaling-stroke"),
+            ])
           let edges = [#(key, path), ..acc.1]
 
           // There's probably a better way than rendering a whole bunch of style
@@ -182,6 +204,29 @@ fn view(
       }
     })
 
+  let handle_slotchange = {
+    use target <- decode.field("target", dom.element_decoder())
+    let assigned_elements = dom.assigned_elements(target)
+    let edges =
+      list.filter_map(assigned_elements, fn(element) {
+        use from <- result.try(dom.attribute(element, "from"))
+        use to <- result.try(dom.attribute(element, "to"))
+        let kind = dom.attribute(element, "type") |> result.unwrap("bezier")
+
+        case string.split(from, "."), string.split(to, ".") {
+          [from_node, from_handle], [to_node, to_handle]
+            if from_node != ""
+            && from_handle != ""
+            && to_node != ""
+            && to_handle != ""
+          -> Ok(#(from, to, kind))
+          _, _ -> Error(Nil)
+        }
+      })
+
+    decode.success(EdgesMounted(edges))
+  }
+
   element.fragment([
     html.style([], {
       ":host {
@@ -197,6 +242,7 @@ fn view(
       [
         attribute("width", "100%"),
         attribute("height", "100%"),
+        attribute("shape-rendering", "geometricPrecision"),
         attribute.styles([
           #("overflow", "visible"),
           #("position", "absolute"),
@@ -210,7 +256,12 @@ fn view(
     ),
 
     component.default_slot(
-      [events.on_edge_change(EdgeChanged), events.on_edges_mount(EdgesMounted)],
+      [
+        edge.on_connect(EdgeConnected),
+        edge.on_disconnect(EdgeDisconnected),
+        edge.on_reconnect(EdgeReconnected),
+        event.on("slotchange", handle_slotchange),
+      ],
       [],
     ),
   ])

@@ -1,8 +1,14 @@
 // IMPORTS ---------------------------------------------------------------------
 
+import clique/bounds.{type Bounds}
+import clique/handle
+import clique/internal/context
 import clique/internal/dom.{type HtmlElement}
 import clique/internal/drag.{type DragState}
-import clique/internal/events
+import clique/node
+import clique/path
+import clique/position
+import clique/transform.{type Transform}
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
@@ -10,13 +16,15 @@ import gleam/float
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import lustre
-import lustre/attribute.{type Attribute}
+import lustre/attribute.{type Attribute, attribute}
 import lustre/component
 import lustre/effect.{type Effect}
 import lustre/element.{type Element, element}
 import lustre/element/html
+import lustre/element/svg
 import lustre/event
 
 // COMPONENT -------------------------------------------------------------------
@@ -45,63 +53,17 @@ pub fn root(
 
 // ATTRIBUTES ------------------------------------------------------------------
 
-pub fn behind() -> Attribute(msg) {
-  component.slot("behind")
-}
-
-pub fn front() -> Attribute(msg) {
-  component.slot("front")
+pub fn overlay() -> Attribute(msg) {
+  component.slot("overlay")
 }
 
 // EVENTS ----------------------------------------------------------------------
 
-// CONTEXT ---------------------------------------------------------------------
+pub fn on_resize(handler: fn(Bounds) -> msg) -> Attribute(msg) {
+  event.on("clique:resize", {
+    use bounds <- decode.field("detail", bounds.decoder())
 
-fn provide_scale(scale: Float) -> Effect(msg) {
-  effect.provide("clique/transform", json.float(scale))
-}
-
-@internal
-pub fn on_scale_change(handler: fn(Float) -> msg) -> component.Option(msg) {
-  component.on_context_change("clique/transform", {
-    use scale <- decode.then(decode.float)
-    decode.success(handler(scale))
-  })
-}
-
-fn provide_handles(
-  handles: Dict(String, Dict(String, #(Float, Float))),
-) -> Effect(Msg) {
-  effect.provide(
-    "clique/handles",
-    json.object({
-      use fields, node, handles <- dict.fold(handles, [])
-      use fields, handle, position <- dict.fold(handles, fields)
-      let field = #(
-        node <> "." <> handle,
-        json.array([position.0, position.1], json.float),
-      )
-
-      [field, ..fields]
-    }),
-  )
-}
-
-@internal
-pub fn on_handles_change(
-  handler: fn(Dict(String, #(Float, Float))) -> msg,
-) -> component.Option(msg) {
-  component.on_context_change("clique/handles", {
-    use handles <- decode.then(
-      decode.dict(decode.string, {
-        use x <- decode.field(0, decode.float)
-        use y <- decode.field(1, decode.float)
-
-        decode.success(#(x, y))
-      }),
-    )
-
-    decode.success(handler(handles))
+    decode.success(handler(bounds))
   })
 }
 
@@ -113,11 +75,9 @@ type Model {
     observer: Option(NodeResizeObserver),
     handles: Dict(String, Dict(String, #(Float, Float))),
     panning: DragState,
+    connection: Option(#(#(String, String), #(Float, Float))),
+    bounds: Bounds,
   )
-}
-
-pub type Transform {
-  Transform(translate_x: Float, translate_y: Float, scale: Float)
 }
 
 type NodeResizeObserver
@@ -125,16 +85,21 @@ type NodeResizeObserver
 fn init(_) -> #(Model, Effect(Msg)) {
   let model =
     Model(
-      transform: Transform(translate_x: 0.0, translate_y: 0.0, scale: 1.0),
+      transform: transform.init(),
       observer: None,
       handles: dict.new(),
       panning: drag.Settled,
+      connection: None,
+      bounds: bounds.init(),
     )
+
   let effect =
     effect.batch([
-      provide_scale(model.transform.scale),
+      context.provide_transform(model.transform),
+      context.provide_scale(model.transform.2),
+      context.provide_connection(None),
       set_transform(model.transform),
-      provide_handles(model.handles),
+      context.provide_handles(model.handles),
       add_resize_observer(),
     ])
 
@@ -144,9 +109,11 @@ fn init(_) -> #(Model, Effect(Msg)) {
 fn add_resize_observer() -> Effect(Msg) {
   use dispatch, shadow_root <- effect.before_paint
   let observer =
-    do_add_resize_observer(shadow_root, fn(changes) {
-      dispatch(NodesResized(changes:))
-    })
+    do_add_resize_observer(
+      shadow_root,
+      fn(bounds) { dispatch(ViewportReszied(bounds:)) },
+      fn(changes) { dispatch(NodesResized(changes:)) },
+    )
 
   dispatch(NodeResizeObserverStarted(observer:))
 }
@@ -154,25 +121,29 @@ fn add_resize_observer() -> Effect(Msg) {
 @external(javascript, "./viewport.ffi.mjs", "add_resize_observer")
 fn do_add_resize_observer(
   shadow_root: Dynamic,
-  callback: fn(List(#(String, String, Float, Float))) -> Nil,
+  on_viewport_change: fn(Bounds) -> Nil,
+  on_nodes_change: fn(List(#(String, String, Float, Float))) -> Nil,
 ) -> NodeResizeObserver
 
 fn options() -> List(component.Option(Msg)) {
-  []
+  [component.adopt_styles(False)]
 }
 
 // UPDATE ----------------------------------------------------------------------
 
 type Msg {
-  NodeMounted(id: String, element: HtmlElement)
-  NodeMoved(id: String, x: Float, y: Float, dx: Float, dy: Float)
+  InertiaSimulationTicked
+  NodeMounted(element: HtmlElement, id: String)
+  NodeMoved(id: String, dx: Float, dy: Float)
   NodeResizeObserverStarted(observer: NodeResizeObserver)
   NodesResized(changes: List(#(String, String, Float, Float)))
+  UserCompletedConnection
   UserPannedViewport(x: Float, y: Float)
+  UserStartedConnection(node: String, handle: String)
   UserStartedPanning(x: Float, y: Float)
   UserStoppedPanning
-  UserZoomedViewport(x: Float, y: Float, delta: Float)
-  InertiaSimulationTicked
+  UserZoomedViewport(client_x: Float, client_y: Float, delta: Float)
+  ViewportReszied(bounds: Bounds)
 }
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
@@ -183,7 +154,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         None -> #(model, effect.none())
       }
 
-    NodeMoved(id: node, x: _, y: _, dx:, dy:) ->
+    NodeMoved(id: node, dx:, dy:) ->
       case dict.get(model.handles, node) {
         Ok(node_handles) -> {
           let handles =
@@ -193,7 +164,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
             })
             |> dict.insert(model.handles, node, _)
           let model = Model(..model, handles:)
-          let effect = provide_handles(handles)
+          let effect = context.provide_handles(handles)
 
           #(model, effect)
         }
@@ -215,7 +186,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       }
 
       let model = Model(..model, handles:)
-      let effect = provide_handles(handles)
+      let effect = context.provide_handles(handles)
 
       #(model, effect)
     }
@@ -227,17 +198,67 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       #(model, effect)
     }
 
-    UserPannedViewport(x:, y:) -> {
-      let #(panning, dx, dy) = drag.update(model.panning, x, y)
-      let translate_x = model.transform.translate_x +. dx
-      let translate_y = model.transform.translate_y +. dy
-      let transform = Transform(..model.transform, translate_x:, translate_y:)
+    UserCompletedConnection ->
+      case model.connection {
+        Some(_) -> #(
+          Model(..model, connection: None),
+          context.provide_connection(None),
+        )
 
-      let model = Model(..model, transform:, panning:)
-      let effect = set_transform(transform)
+        None -> #(model, effect.none())
+      }
 
-      #(model, effect)
-    }
+    UserPannedViewport(x:, y:) ->
+      case model.connection {
+        Some(#(connection, _)) -> {
+          let world_x =
+            { x -. model.bounds.0 -. model.transform.0 } /. model.transform.2
+          let world_y =
+            { y -. model.bounds.1 -. model.transform.1 } /. model.transform.2
+
+          let position = #(world_x, world_y)
+          let model = Model(..model, connection: Some(#(connection, position)))
+          let effect = effect.none()
+
+          #(model, effect)
+        }
+
+        None -> {
+          let #(panning, dx, dy) = drag.update(model.panning, x, y)
+          let transform =
+            transform.new(
+              x: model.transform.0 +. dx,
+              y: model.transform.1 +. dy,
+              zoom: model.transform.2,
+            )
+
+          let model = Model(..model, transform:, panning:)
+          let effect =
+            effect.batch([
+              set_transform(transform),
+              context.provide_transform(model.transform),
+            ])
+
+          #(model, effect)
+        }
+      }
+
+    UserStartedConnection(node:, handle:) ->
+      case dict.get(model.handles, node) |> result.try(dict.get(_, handle)) {
+        Ok(start) -> {
+          let connection = #(node, handle)
+          let model = Model(..model, connection: Some(#(connection, start)))
+          let effect =
+            effect.batch([
+              context.provide_connection(Some(#(node, handle))),
+              add_window_mousemove_listener(),
+            ])
+
+          #(model, effect)
+        }
+
+        Error(_) -> #(model, effect.none())
+      }
 
     UserStartedPanning(x:, y:) -> {
       let model = Model(..model, panning: drag.start(x, y))
@@ -248,7 +269,17 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     UserStoppedPanning -> {
       let #(panning, effect) = drag.stop(model.panning, InertiaSimulationTicked)
-      let model = Model(..model, panning:)
+      let effect = case model.connection {
+        Some(_) ->
+          effect.batch([
+            effect,
+            event.emit("clique:connection-cancel", json.null()),
+            context.provide_connection(None),
+          ])
+        None -> effect
+      }
+
+      let model = Model(..model, panning:, connection: None)
 
       #(model, effect)
     }
@@ -258,19 +289,27 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         drag.tick(model.panning, InertiaSimulationTicked)
 
       let transform =
-        Transform(
-          ..model.transform,
-          translate_x: model.transform.translate_x +. vx,
-          translate_y: model.transform.translate_y +. vy,
+        transform.new(
+          x: model.transform.0 +. vx,
+          y: model.transform.1 +. vy,
+          zoom: model.transform.2,
         )
 
       let model = Model(..model, transform:, panning:)
-      let effect = effect.batch([effect, set_transform(transform)])
+      let effect =
+        effect.batch([
+          effect,
+          set_transform(model.transform),
+          context.provide_transform(model.transform),
+        ])
 
       #(model, effect)
     }
 
-    UserZoomedViewport(x:, y:, delta:) -> {
+    UserZoomedViewport(client_x:, client_y:, delta:) -> {
+      let x = client_x -. model.bounds.0
+      let y = client_y -. model.bounds.1
+
       let zoom_factor = case delta >. 0.0 {
         True -> 1.0 +. { delta *. 0.01 }
         False -> 1.0 /. { 1.0 +. { float.absolute_value(delta) *. 0.01 } }
@@ -278,7 +317,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
       let min_scale = 0.5
       let max_scale = 2.0
-      let new_scale = model.transform.scale *. zoom_factor
+      let new_scale = model.transform.2 *. zoom_factor
       let clamped_scale = case new_scale {
         s if s <. min_scale -> min_scale
         s if s >. max_scale -> max_scale
@@ -286,24 +325,33 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       }
 
       // Convert mouse position to world coordinates before zoom
-      let world_x =
-        { x -. model.transform.translate_x } /. model.transform.scale
-      let world_y =
-        { y -. model.transform.translate_y } /. model.transform.scale
+      let world_x = { x -. model.transform.0 } /. model.transform.2
+      let world_y = { y -. model.transform.1 } /. model.transform.2
 
       // Calculate new translation to keep the world point under the mouse
       let new_translate_x = x -. world_x *. clamped_scale
       let new_translate_y = y -. world_y *. clamped_scale
 
       let transform =
-        Transform(
-          translate_x: new_translate_x,
-          translate_y: new_translate_y,
-          scale: clamped_scale,
+        transform.new(
+          x: new_translate_x,
+          y: new_translate_y,
+          zoom: clamped_scale,
         )
       let model = Model(..model, transform:)
       let effect =
-        effect.batch([provide_scale(transform.scale), set_transform(transform)])
+        effect.batch([
+          context.provide_scale(model.transform.2),
+          set_transform(model.transform),
+          context.provide_transform(model.transform),
+        ])
+
+      #(model, effect)
+    }
+
+    ViewportReszied(bounds:) -> {
+      let model = Model(..model, bounds:)
+      let effect = effect.none()
 
       #(model, effect)
     }
@@ -314,13 +362,9 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
 fn set_transform(transform: Transform) -> Effect(Msg) {
   use _, shadow_root <- effect.before_paint
-  let translate =
-    "translate(${x}px, ${y}px) scale(${scale})"
-    |> string.replace("${x}", float.to_string(transform.translate_x))
-    |> string.replace("${y}", float.to_string(transform.translate_y))
-    |> string.replace("${scale}", float.to_string(transform.scale))
+  let matrix = transform.to_css_matrix(transform)
 
-  do_set_transform(shadow_root, translate)
+  do_set_transform(shadow_root, matrix)
 }
 
 @external(javascript, "./viewport.ffi.mjs", "set_transform")
@@ -364,7 +408,7 @@ fn do_observe_node(observer: NodeResizeObserver, node: HtmlElement) -> Nil
 
 // VIEW ------------------------------------------------------------------------
 
-fn view(_) -> Element(Msg) {
+fn view(model: Model) -> Element(Msg) {
   element.fragment([
     html.style([], {
       "
@@ -377,6 +421,14 @@ fn view(_) -> Element(Msg) {
           will-change: scroll-position;
       }
 
+      :host(:state(dragging)) {
+        cursor: grabbing;
+      }
+
+      :host(:state(dragging)) #viewport {
+        will-change: transform;
+      }
+
       #container {
           position: relative;
           width: 100%;
@@ -385,15 +437,8 @@ fn view(_) -> Element(Msg) {
           cursor: grab;
           contain: layout paint;
           backface-visibility: hidden;
-          transform: translateZ(0);
-      }
-
-      :host(:state(dragging)) {
-        cursor: grabbing;
-      }
-
-      :host(:state(dragging)) #viewport {
-        will-change: transform;
+          transform: translate3d(0, 0, 0);
+          position: relative;
       }
 
       #viewport {
@@ -411,18 +456,42 @@ fn view(_) -> Element(Msg) {
           transition: none;
           width: 100%;
       }
+
+      #connection-line {
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+        position: absolute;
+        top: 0;
+        left: 0;
+        will-change: transform;
+        pointer-events: none;
+      }
       "
     }),
 
     view_container([
-      component.named_slot("behind", [], []),
+      component.named_slot("background", [], []),
+
       view_viewport([
         component.default_slot(
-          [events.on_node_mount(NodeMounted), events.on_node_drag(NodeMoved)],
+          [
+            node.on_mount(NodeMounted),
+            node.on_change(NodeMoved),
+            handle.on_connection_start(UserStartedConnection),
+            handle.on_connection_complete(fn(_, _) { UserCompletedConnection }),
+          ],
           [],
         ),
+
+        case model.connection {
+          Some(#(#(node, handle), end)) ->
+            view_connection_line(model.handles, node, handle, end)
+          None -> element.none()
+        },
       ]),
-      component.named_slot("front", [], []),
+
+      component.named_slot("overlay", [], []),
     ]),
   ])
 }
@@ -473,17 +542,11 @@ fn view_container(children: List(Element(Msg))) -> Element(Msg) {
   }
 
   let handle_wheel = {
-    use target <- decode.field("currentTarget", dom.element_decoder())
     use client_x <- decode.field("clientX", decode.float)
     use client_y <- decode.field("clientY", decode.float)
     use delta <- decode.field("deltaY", decode.float)
 
-    // Get container bounds to calculate relative mouse position
-    let rect = dom.bounding_client_rect(target)
-    let x = client_x -. rect.left
-    let y = client_y -. rect.top
-
-    decode.success(UserZoomedViewport(x:, y:, delta:))
+    decode.success(UserZoomedViewport(client_x:, client_y:, delta:))
   }
 
   html.div(
@@ -501,4 +564,36 @@ fn view_container(children: List(Element(Msg))) -> Element(Msg) {
 
 fn view_viewport(children: List(Element(Msg))) -> Element(Msg) {
   html.div([attribute.id("viewport")], children)
+}
+
+// VIEW CONNECTION LINE --------------------------------------------------------
+
+fn view_connection_line(
+  handles: Dict(String, Dict(String, #(Float, Float))),
+  from_node: String,
+  from_handle: String,
+  to: #(Float, Float),
+) -> Element(msg) {
+  let result = {
+    use handles <- result.try(dict.get(handles, from_node))
+    use from <- result.try(dict.get(handles, from_handle))
+    let #(path, _, _) =
+      path.bezier(from.0, from.1, position.Right, to.0, to.1, position.Left)
+
+    Ok(
+      html.svg([attribute.id("connection-line")], [
+        svg.path([
+          attribute("d", path),
+          attribute("fill", "none"),
+          attribute("stroke", "#000"),
+          attribute("stroke-width", "2"),
+        ]),
+      ]),
+    )
+  }
+
+  case result {
+    Ok(svg) -> svg
+    Error(_) -> element.none()
+  }
 }
