@@ -202,7 +202,10 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       case model.connection {
         Some(_) -> #(
           Model(..model, connection: None),
-          context.provide_connection(None),
+          effect.batch([
+            context.provide_connection(None),
+            component.remove_pseudo_state("connecting"),
+          ]),
         )
 
         None -> #(model, effect.none())
@@ -251,6 +254,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           let effect =
             effect.batch([
               context.provide_connection(Some(#(node, handle))),
+              component.set_pseudo_state("connecting"),
               add_window_mousemove_listener(),
             ])
 
@@ -262,7 +266,11 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
     UserStartedPanning(x:, y:) -> {
       let model = Model(..model, panning: drag.start(x, y))
-      let effect = add_window_mousemove_listener()
+      let effect =
+        effect.batch([
+          add_window_mousemove_listener(),
+          component.set_pseudo_state("dragging"),
+        ])
 
       #(model, effect)
     }
@@ -272,11 +280,12 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       let effect = case model.connection {
         Some(_) ->
           effect.batch([
-            effect,
             event.emit("clique:connection-cancel", json.null()),
+            component.remove_pseudo_state("connecting"),
             context.provide_connection(None),
           ])
-        None -> effect
+        None ->
+          effect.batch([effect, component.remove_pseudo_state("dragging")])
       }
 
       let model = Model(..model, panning:, connection: None)
@@ -413,6 +422,7 @@ fn view(model: Model) -> Element(Msg) {
     html.style([], {
       "
       :host {
+          cursor: grab;
           display: block;
           position: relative;
           width: 100%;
@@ -421,7 +431,7 @@ fn view(model: Model) -> Element(Msg) {
           will-change: scroll-position;
       }
 
-      :host(:state(dragging)) {
+      :host(:state(dragging)), :host(:state(connecting)) {
         cursor: grabbing;
       }
 
@@ -434,7 +444,6 @@ fn view(model: Model) -> Element(Msg) {
           width: 100%;
           height: 100%;
           overflow: hidden;
-          cursor: grab;
           contain: layout paint;
           backface-visibility: hidden;
           transform: translate3d(0, 0, 0);

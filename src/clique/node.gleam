@@ -431,6 +431,7 @@ fn view(_) -> Element(Msg) {
   element.fragment([
     html.style([], {
       ":host {
+        cursor: grab;
         display: block;
         min-width: max-content;
         position: absolute !important;
@@ -441,8 +442,10 @@ fn view(_) -> Element(Msg) {
       }
 
       :host(:state(dragging)) {
-        pointer-events: none;
-      }"
+        cursor: grabbing;
+        user-select: none;
+      }
+      "
     }),
 
     component.default_slot([event.advanced("mousedown", handle_mousedown)], []),
