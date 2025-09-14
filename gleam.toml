@@ -2,20 +2,17 @@ name = "clique"
 version = "1.0.0"
 target = "javascript"
 
-# Fill out these fields if you intend to generate HTML documentation or publish
-# your project to the Hex package manager.
-#
-# description = ""
-# licences = ["Apache-2.0"]
-# repository = { type = "github", user = "", repo = "" }
-# links = [{ title = "Website", href = "" }]
-#
-# For a full reference of all the available options, you can have a look at
-# https://gleam.run/writing-gleam/gleam-toml/.
+description = "Create graph visualisations and node-based UIs with Lustre"
+repository = { type = "github", user = "hayleigh-dot-dev", repo = "clique" }
+licences = ["MIT"]
+
+links = [
+    { title = "Sponsor", href = "https://github.com/sponsors/hayleigh-dot-dev" },
+]
+
+internal_modules = [ "clique/internal", "clique/internal/*" ]
 
 [dependencies]
 gleam_json = ">= 3.0.2 and < 4.0.0"
-gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+gleam_stdlib = ">= 0.63.0 and < 2.0.0"
 lustre = ">= 5.3.4 and < 6.0.0"
-
-[dev-dependencies]
