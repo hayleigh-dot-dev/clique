@@ -5,14 +5,17 @@ import clique/handle
 import clique/internal/context
 import clique/internal/dom.{type HtmlElement}
 import clique/internal/drag.{type DragState}
+import clique/internal/prop.{type Prop, Controlled, Touched, Unchanged}
 import clique/node
 import clique/path
 import clique/position
 import clique/transform.{type Transform}
+import gleam/bool
 import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/float
+import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -57,8 +60,21 @@ pub fn overlay() -> Attribute(msg) {
   component.slot("overlay")
 }
 
+pub fn transform(transform: Transform) -> Attribute(msg) {
+  case lustre.is_browser() {
+    True -> attribute.property("transform", transform.to_json(transform))
+    False -> initial_transform(transform)
+  }
+}
+
+pub fn initial_transform(transform: Transform) -> Attribute(msg) {
+  attribute("transform", transform.to_string(transform))
+}
+
 // EVENTS ----------------------------------------------------------------------
 
+///
+///
 pub fn on_resize(handler: fn(Bounds) -> msg) -> Attribute(msg) {
   event.on("clique:resize", {
     use bounds <- decode.field("detail", bounds.decoder())
@@ -67,11 +83,79 @@ pub fn on_resize(handler: fn(Bounds) -> msg) -> Attribute(msg) {
   })
 }
 
+fn emit_resize(bounds: Bounds) -> Effect(msg) {
+  event.emit("clique:resize", bounds.to_json(bounds))
+}
+
+///
+///
+pub fn on_connection_cancel(
+  handler: fn(#(String, String), Float, Float) -> msg,
+) -> Attribute(msg) {
+  event.on("clique:connection-cancel", {
+    let handle_decoder = {
+      use node <- decode.field("node", decode.string)
+      use handle <- decode.field("handle", decode.string)
+
+      decode.success(#(node, handle))
+    }
+
+    use from <- decode.subfield(["detail", "from"], handle_decoder)
+    use x <- decode.subfield(["detail", "x"], decode.float)
+    use y <- decode.subfield(["detail", "y"], decode.float)
+
+    decode.success(handler(from, x, y))
+  })
+}
+
+fn emit_connection_cancel(
+  from: #(String, String),
+  x: Float,
+  y: Float,
+) -> Effect(msg) {
+  event.emit("clique:connection-cancel", {
+    json.object([
+      #("from", {
+        json.object([
+          #("node", json.string(from.0)),
+          #("handle", json.string(from.1)),
+        ])
+      }),
+      #("x", json.float(x)),
+      #("y", json.float(y)),
+    ])
+  })
+}
+
+pub fn on_pan(handler: fn(Transform) -> msg) -> Attribute(msg) {
+  event.on("clique:pan", {
+    use transform <- decode.field("detail", transform.decoder())
+
+    decode.success(handler(transform))
+  })
+}
+
+fn emit_pan(transform: Transform) -> Effect(msg) {
+  event.emit("clique:pan", transform.to_json(transform))
+}
+
+pub fn on_zoom(handler: fn(Transform) -> msg) -> Attribute(msg) {
+  event.on("clique:zoom", {
+    use transform <- decode.field("detail", transform.decoder())
+
+    decode.success(handler(transform))
+  })
+}
+
+fn emit_zoom(transform: Transform) -> Effect(msg) {
+  event.emit("clique:zoom", transform.to_json(transform))
+}
+
 // MODEL -----------------------------------------------------------------------
 
 type Model {
   Model(
-    transform: Transform,
+    transform: Prop(Transform),
     observer: Option(NodeResizeObserver),
     handles: Dict(String, Dict(String, #(Float, Float))),
     panning: DragState,
@@ -85,7 +169,7 @@ type NodeResizeObserver
 fn init(_) -> #(Model, Effect(Msg)) {
   let model =
     Model(
-      transform: transform.init(),
+      transform: prop.new(transform.init()),
       observer: None,
       handles: dict.new(),
       panning: drag.Settled,
@@ -95,8 +179,8 @@ fn init(_) -> #(Model, Effect(Msg)) {
 
   let effect =
     effect.batch([
-      context.provide_transform(model.transform),
-      context.provide_scale(model.transform.2),
+      context.provide_transform(model.transform.value),
+      context.provide_scale(model.transform.value.2),
       context.provide_connection(None),
       set_transform(model.transform),
       context.provide_handles(model.handles),
@@ -126,7 +210,38 @@ fn do_add_resize_observer(
 ) -> NodeResizeObserver
 
 fn options() -> List(component.Option(Msg)) {
-  [component.adopt_styles(False)]
+  [
+    component.adopt_styles(False),
+
+    component.on_attribute_change("transform", fn(value) {
+      case string.split(value, " ") |> list.map(string.trim) {
+        [x, y, zoom] -> {
+          let parse = fn(value) {
+            case float.parse(value) {
+              Ok(n) -> Ok(n)
+              Error(_) ->
+                case int.parse(value) {
+                  Ok(i) -> Ok(int.to_float(i))
+                  Error(_) -> Error(Nil)
+                }
+            }
+          }
+
+          case parse(x), parse(y), parse(zoom) {
+            Ok(x), Ok(y), Ok(zoom) ->
+              Ok(ParentSetInitialTransform(transform.new(x:, y:, zoom:)))
+            _, _, _ -> Error(Nil)
+          }
+        }
+        _ -> Error(Nil)
+      }
+    }),
+
+    component.on_property_change("transform", {
+      transform.decoder()
+      |> decode.map(ParentUpdatedTransform)
+    }),
+  ]
 }
 
 // UPDATE ----------------------------------------------------------------------
@@ -137,11 +252,13 @@ type Msg {
   NodeMoved(id: String, dx: Float, dy: Float)
   NodeResizeObserverStarted(observer: NodeResizeObserver)
   NodesResized(changes: List(#(String, String, Float, Float)))
+  ParentSetInitialTransform(transform: Transform)
+  ParentUpdatedTransform(transform: Transform)
   UserCompletedConnection
   UserPannedViewport(x: Float, y: Float)
   UserStartedConnection(node: String, handle: String)
   UserStartedPanning(x: Float, y: Float)
-  UserStoppedPanning
+  UserStoppedPanning(x: Float, y: Float)
   UserZoomedViewport(client_x: Float, client_y: Float, delta: Float)
   ViewportReszied(bounds: Bounds)
 }
@@ -175,13 +292,16 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     NodesResized(changes:) -> {
       let handles = {
         use all, #(node, handle, x, y) <- list.fold(changes, model.handles)
+        let x = { x -. model.transform.value.0 } /. model.transform.value.2
+        let y = { y -. model.transform.value.1 } /. model.transform.value.2
+        let position = #(x, y)
 
         case dict.get(all, node) {
           Ok(for_node) ->
-            dict.insert(all, node, dict.insert(for_node, handle, #(x, y)))
+            dict.insert(all, node, dict.insert(for_node, handle, position))
 
           Error(_) ->
-            dict.insert(all, node, dict.from_list([#(handle, #(x, y))]))
+            dict.insert(all, node, dict.from_list([#(handle, position)]))
         }
       }
 
@@ -211,13 +331,41 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         None -> #(model, effect.none())
       }
 
+    ParentSetInitialTransform(transform: new_transform) -> {
+      let transform = prop.uncontrolled(model.transform, new_transform)
+      let model = Model(..model, transform:)
+      let effect =
+        effect.batch([
+          set_transform(model.transform),
+          context.provide_transform(model.transform.value),
+          context.provide_scale(model.transform.value.2),
+        ])
+
+      #(model, effect)
+    }
+
+    ParentUpdatedTransform(transform: new_transform) -> {
+      let transform = prop.controlled(new_transform)
+      let model = Model(..model, transform:)
+      let effect =
+        effect.batch([
+          set_transform(model.transform),
+          context.provide_transform(model.transform.value),
+          context.provide_scale(model.transform.value.2),
+        ])
+
+      #(model, effect)
+    }
+
     UserPannedViewport(x:, y:) ->
       case model.connection {
         Some(#(connection, _)) -> {
           let world_x =
-            { x -. model.bounds.0 -. model.transform.0 } /. model.transform.2
+            { x -. model.bounds.0 -. model.transform.value.0 }
+            /. model.transform.value.2
           let world_y =
-            { y -. model.bounds.1 -. model.transform.1 } /. model.transform.2
+            { y -. model.bounds.1 -. model.transform.value.1 }
+            /. model.transform.value.2
 
           let position = #(world_x, world_y)
           let model = Model(..model, connection: Some(#(connection, position)))
@@ -228,19 +376,31 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
         None -> {
           let #(panning, dx, dy) = drag.update(model.panning, x, y)
-          let transform =
-            transform.new(
-              x: model.transform.0 +. dx,
-              y: model.transform.1 +. dy,
-              zoom: model.transform.2,
+          use <- bool.guard(dx == 0.0 && dy == 0.0, #(
+            Model(..model, panning:),
+            effect.none(),
+          ))
+
+          let nx = model.transform.value.0 +. dx
+          let ny = model.transform.value.1 +. dy
+          let new_transform = #(nx, ny, model.transform.value.2)
+
+          let model =
+            Model(
+              ..model,
+              transform: prop.update(model.transform, new_transform),
+              panning:,
             )
 
-          let model = Model(..model, transform:, panning:)
-          let effect =
-            effect.batch([
-              set_transform(transform),
-              context.provide_transform(model.transform),
-            ])
+          let effect = case model.transform.state {
+            Controlled -> emit_pan(new_transform)
+            Unchanged | Touched ->
+              effect.batch([
+                set_transform(model.transform),
+                context.provide_transform(model.transform.value),
+                emit_pan(new_transform),
+              ])
+          }
 
           #(model, effect)
         }
@@ -275,12 +435,19 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       #(model, effect)
     }
 
-    UserStoppedPanning -> {
+    UserStoppedPanning(x:, y:) -> {
       let #(panning, effect) = drag.stop(model.panning, InertiaSimulationTicked)
+      let world_x =
+        { x -. model.bounds.0 -. model.transform.value.0 }
+        /. model.transform.value.2
+      let world_y =
+        { y -. model.bounds.1 -. model.transform.value.1 }
+        /. model.transform.value.2
+
       let effect = case model.connection {
-        Some(_) ->
+        Some(from) ->
           effect.batch([
-            event.emit("clique:connection-cancel", json.null()),
+            emit_connection_cancel(from.0, world_x, world_y),
             component.remove_pseudo_state("connecting"),
             context.provide_connection(None),
           ])
@@ -294,23 +461,31 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     }
 
     InertiaSimulationTicked -> {
-      let #(panning, vx, vy, effect) =
+      let #(panning, vx, vy, inertia_effect) =
         drag.tick(model.panning, InertiaSimulationTicked)
 
-      let transform =
-        transform.new(
-          x: model.transform.0 +. vx,
-          y: model.transform.1 +. vy,
-          zoom: model.transform.2,
+      let nx = model.transform.value.0 +. vx
+      let ny = model.transform.value.1 +. vy
+      let new_transform =
+        transform.new(x: nx, y: ny, zoom: model.transform.value.2)
+
+      let model =
+        Model(
+          ..model,
+          transform: prop.update(model.transform, new_transform),
+          panning:,
         )
 
-      let model = Model(..model, transform:, panning:)
-      let effect =
-        effect.batch([
-          effect,
-          set_transform(model.transform),
-          context.provide_transform(model.transform),
-        ])
+      let effect = case model.transform.state {
+        Controlled -> effect.batch([inertia_effect, emit_pan(new_transform)])
+        Unchanged | Touched ->
+          effect.batch([
+            inertia_effect,
+            set_transform(model.transform),
+            context.provide_transform(model.transform.value),
+            emit_pan(new_transform),
+          ])
+      }
 
       #(model, effect)
     }
@@ -326,41 +501,46 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
       let min_scale = 0.5
       let max_scale = 2.0
-      let new_scale = model.transform.2 *. zoom_factor
+      let new_scale = model.transform.value.2 *. zoom_factor
       let clamped_scale = case new_scale {
         s if s <. min_scale -> min_scale
         s if s >. max_scale -> max_scale
         s -> s
       }
 
+      use <- bool.guard(clamped_scale == model.transform.value.2, #(
+        model,
+        effect.none(),
+      ))
+
       // Convert mouse position to world coordinates before zoom
-      let world_x = { x -. model.transform.0 } /. model.transform.2
-      let world_y = { y -. model.transform.1 } /. model.transform.2
+      let world_x = { x -. model.transform.value.0 } /. model.transform.value.2
+      let world_y = { y -. model.transform.value.1 } /. model.transform.value.2
 
       // Calculate new translation to keep the world point under the mouse
-      let new_translate_x = x -. world_x *. clamped_scale
-      let new_translate_y = y -. world_y *. clamped_scale
+      let nx = x -. world_x *. clamped_scale
+      let ny = y -. world_y *. clamped_scale
+      let new_transform = transform.new(x: nx, y: ny, zoom: clamped_scale)
+      let model =
+        Model(..model, transform: prop.update(model.transform, new_transform))
 
-      let transform =
-        transform.new(
-          x: new_translate_x,
-          y: new_translate_y,
-          zoom: clamped_scale,
-        )
-      let model = Model(..model, transform:)
-      let effect =
-        effect.batch([
-          context.provide_scale(model.transform.2),
-          set_transform(model.transform),
-          context.provide_transform(model.transform),
-        ])
+      let effect = case model.transform.state {
+        Controlled -> emit_zoom(new_transform)
+        Unchanged | Touched ->
+          effect.batch([
+            context.provide_scale(model.transform.value.2),
+            set_transform(model.transform),
+            context.provide_transform(model.transform.value),
+            emit_zoom(new_transform),
+          ])
+      }
 
       #(model, effect)
     }
 
     ViewportReszied(bounds:) -> {
       let model = Model(..model, bounds:)
-      let effect = effect.none()
+      let effect = emit_resize(bounds)
 
       #(model, effect)
     }
@@ -369,9 +549,9 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
 // EFFECTS ---------------------------------------------------------------------
 
-fn set_transform(transform: Transform) -> Effect(Msg) {
+fn set_transform(transform: Prop(Transform)) -> Effect(Msg) {
   use _, shadow_root <- effect.before_paint
-  let matrix = transform.to_css_matrix(transform)
+  let matrix = transform.to_css_matrix(transform.value)
 
   do_set_transform(shadow_root, matrix)
 }
@@ -381,18 +561,21 @@ fn do_set_transform(shadow_root: Dynamic, value: String) -> Nil
 
 fn add_window_mousemove_listener() -> Effect(Msg) {
   use dispatch <- effect.from
-  use event <- do_add_window_mousemove_listener(fn() {
-    dispatch(UserStoppedPanning)
-  })
-
-  let decoder = {
+  let decoder = fn(msg) {
     use client_x <- decode.field("clientX", decode.float)
     use client_y <- decode.field("clientY", decode.float)
 
-    decode.success(UserPannedViewport(x: client_x, y: client_y))
+    decode.success(msg(client_x, client_y))
   }
 
-  case decode.run(event, decoder) {
+  use event <- do_add_window_mousemove_listener(fn(event) {
+    case decode.run(event, decoder(UserStoppedPanning)) {
+      Ok(msg) -> dispatch(msg)
+      Error(_) -> Nil
+    }
+  })
+
+  case decode.run(event, decoder(UserPannedViewport)) {
     Ok(msg) -> dispatch(msg)
     Error(_) -> Nil
   }
@@ -400,7 +583,7 @@ fn add_window_mousemove_listener() -> Effect(Msg) {
 
 @external(javascript, "./viewport.ffi.mjs", "add_window_mousemove_listener")
 fn do_add_window_mousemove_listener(
-  handle_mouseup: fn() -> Nil,
+  handle_mouseup: fn(Dynamic) -> Nil,
   callback: fn(Dynamic) -> Nil,
 ) -> Nil
 

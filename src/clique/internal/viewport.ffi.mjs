@@ -1,4 +1,4 @@
-import { List } from "../gleam.mjs";
+import { List } from "../../gleam.mjs";
 
 export const set_transform = (shadow_root, value) => {
   const viewport = shadow_root.querySelector("#viewport");
@@ -13,7 +13,7 @@ export const add_resize_observer = (
   on_viewport_resize,
   callback,
 ) => {
-  const viewportRef = new WeakRef(shadow_root.querySelector("#viewport"));
+  const containerRef = new WeakRef(shadow_root.querySelector("#container"));
 
   let rafId = null;
   let pendingUpdates = new Map();
@@ -30,14 +30,17 @@ export const add_resize_observer = (
     ]);
   });
 
-  viewportObserver.observe(viewportRef.deref());
+  // It's important that we observe the container rather than the viewport element
+  // directly, because the viewport is transformed (scaled and translated) and
+  // that directly affects the bounding client rect.
+  viewportObserver.observe(containerRef.deref());
 
   const processUpdates = () => {
-    const viewport = viewportRef.deref();
-    if (!viewport || pendingUpdates.size === 0) return;
+    const container = containerRef.deref();
+    if (!container || pendingUpdates.size === 0) return;
 
-    const scaleX = viewportRect.width / (viewport.clientWidth || 1);
-    const scaleY = viewportRect.height / (viewport.clientHeight || 1);
+    const scaleX = viewportRect.width / (container.clientWidth || 1);
+    const scaleY = viewportRect.height / (container.clientHeight || 1);
 
     const updates = [];
 
@@ -121,11 +124,11 @@ export const add_window_mousemove_listener = (handle_mouseup, callback) => {
   window.addEventListener("mousemove", throttledCallback, { passive: true });
   window.addEventListener(
     "mouseup",
-    () => {
+    (event) => {
       document.head.removeChild(style);
       rafId = data = null;
       window.removeEventListener("mousemove", throttledCallback);
-      handle_mouseup();
+      handle_mouseup(event);
     },
     { once: true },
   );
