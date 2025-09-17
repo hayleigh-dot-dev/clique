@@ -77,45 +77,6 @@ fn emit_connection_start(node: String, handle: String) -> Effect(msg) {
   })
 }
 
-pub fn on_connection_cancel(
-  handler: fn(#(String, String), Float, Float) -> msg,
-) -> Attribute(msg) {
-  event.on("clique:connection-cancel", {
-    let handle_decoder = {
-      use node <- decode.field("node", decode.string)
-      use handle <- decode.field("handle", decode.string)
-
-      decode.success(#(node, handle))
-    }
-
-    use from <- decode.subfield(["detail", "from"], handle_decoder)
-    use x <- decode.subfield(["detail", "x"], decode.float)
-    use y <- decode.subfield(["detail", "y"], decode.float)
-
-    decode.success(handler(from, x, y))
-  })
-}
-
-@internal
-pub fn emit_connection_cancel(
-  from: #(String, String),
-  x: Float,
-  y: Float,
-) -> Effect(msg) {
-  event.emit("clique:connection-cancel", {
-    json.object([
-      #("from", {
-        json.object([
-          #("node", json.string(from.0)),
-          #("handle", json.string(from.1)),
-        ])
-      }),
-      #("x", json.float(x)),
-      #("y", json.float(y)),
-    ])
-  })
-}
-
 pub fn on_connection_complete(
   handler: fn(#(String, String), #(String, String)) -> msg,
 ) -> Attribute(msg) {
