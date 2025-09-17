@@ -43,9 +43,9 @@ pub fn init() -> Bounds {
 pub fn decoder() -> decode.Decoder(Bounds) {
   let tuple_decoder = {
     use x <- decode.field(0, decode.float)
-    use y <- decode.field(0, decode.float)
-    use width <- decode.field(0, decode.float)
-    use height <- decode.field(0, decode.float)
+    use y <- decode.field(1, decode.float)
+    use width <- decode.field(2, decode.float)
+    use height <- decode.field(3, decode.float)
 
     decode.success(#(x, y, width, height))
   }
@@ -189,6 +189,17 @@ pub fn set_height(bounds: Bounds, height: Float) -> Bounds {
 
     False -> #(bounds.0, bounds.1, bounds.2, height)
   }
+}
+
+///
+///
+pub fn extend(a: Bounds, to b: Bounds) -> Bounds {
+  let x1 = float.min(a.0, b.0)
+  let y1 = float.min(a.1, b.1)
+  let x2 = float.max(a.0 +. a.2, b.0 +. b.2)
+  let y2 = float.max(a.1 +. a.3, b.1 +. b.3)
+
+  #(x1, y1, x2 -. x1, y2 -. y1)
 }
 
 // CONVERSIONS -----------------------------------------------------------------
