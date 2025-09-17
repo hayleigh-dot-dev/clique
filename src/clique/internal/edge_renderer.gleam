@@ -161,9 +161,10 @@ fn view(
 ) -> Element(Msg) {
   let #(positions, edges) =
     dict.fold(model.edges, #([], []), fn(acc, edge, kind) {
+      let key = edge.0 <> "-" <> edge.1
+
       case dict.get(model.handles, edge.0), dict.get(model.handles, edge.1) {
         Ok(from), Ok(to) -> {
-          let key = edge.0 <> "-" <> edge.1
           let #(path, cx, cy) = to_path(kind, from, to)
           let path =
             svg.path([
@@ -200,9 +201,30 @@ fn view(
 
           #(positions, edges)
         }
-        _, _ -> acc
+
+        // If we don't yet have handle positions for this edge, hide it so the
+        // edge label doesn't just render at 0, 0.
+        _, _ -> {
+          let positions = [
+            #(key, {
+              html.style(
+                [],
+                "::slotted(clique-edge[from=\""
+                  <> edge.0
+                  <> "\"][to=\""
+                  <> edge.1
+                  <> "\"]) { display: none; }",
+              )
+            }),
+            ..acc.0
+          ]
+
+          #(positions, acc.1)
+        }
       }
     })
+
+  echo #(positions, edges)
 
   let handle_slotchange = {
     use target <- decode.field("target", dom.element_decoder())
