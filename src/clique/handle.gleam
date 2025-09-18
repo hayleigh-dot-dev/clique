@@ -3,7 +3,9 @@
 import clique/internal/context
 import clique/internal/dom
 import clique/node
+import clique/position.{type Position}
 import gleam/dynamic/decode
+import gleam/int
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string
@@ -17,6 +19,8 @@ import lustre/event
 
 // COMPONENT -------------------------------------------------------------------
 
+///
+///
 pub const tag: String = "clique-handle"
 
 ///
@@ -41,24 +45,25 @@ pub fn root(
 
 // ATTRIBUTES ------------------------------------------------------------------
 
-pub type Placement {
-  Top
-  Right
-  Bottom
-  Left
+///
+///
+pub fn placement(side: Position) -> Attribute(msg) {
+  attribute("placement", position.to_side(side))
 }
 
-pub fn placement(value: Placement) -> Attribute(msg) {
-  case value {
-    Top -> attribute("placement", "top")
-    Right -> attribute("placement", "right")
-    Bottom -> attribute("placement", "bottom")
-    Left -> attribute("placement", "left")
+///
+///
+pub fn tolerance(value: Int) -> Attribute(msg) {
+  case lustre.is_browser() {
+    True -> attribute.property("tolerance", json.int(value))
+    False -> attribute("tolerance", int.to_string(value))
   }
 }
 
 // EVENTS ----------------------------------------------------------------------
 
+///
+///
 pub fn on_connection_start(handler: fn(String, String) -> msg) -> Attribute(msg) {
   event.on("clique:connection-start", {
     use node <- decode.subfield(["detail", "node"], decode.string)
@@ -77,6 +82,8 @@ fn emit_connection_start(node: String, handle: String) -> Effect(msg) {
   })
 }
 
+///
+///
 pub fn on_connection_complete(
   handler: fn(#(String, String), #(String, String)) -> msg,
 ) -> Attribute(msg) {
@@ -126,11 +133,14 @@ type Model {
     name: String,
     disabled: Bool,
     connection: Option(#(String, String)),
+    tolerance: Int,
   )
 }
 
 fn init(_) -> #(Model, Effect(Msg)) {
-  let model = Model(node: "", name: "", disabled: False, connection: None)
+  let model =
+    Model(node: "", name: "", disabled: False, connection: None, tolerance: 5)
+
   let effect =
     effect.batch([
       dom.add_event_listener("mousedown", {
@@ -162,6 +172,21 @@ fn options() -> List(component.Option(Msg)) {
       Ok(ParentSetName(value: string.trim(value)))
     }),
 
+    component.on_attribute_change("tolerance", fn(value) {
+      case int.parse(value) {
+        Ok(v) if v >= 0 -> Ok(ParentSetTolerance(value: v))
+        _ -> Ok(ParentSetTolerance(value: 5))
+      }
+    }),
+
+    component.on_property_change("tolerance", {
+      use v <- decode.then(decode.int)
+
+      case v >= 0 {
+        True -> decode.success(ParentSetTolerance(value: v))
+        False -> decode.success(ParentSetTolerance(value: 5))
+      }
+    }),
     node.on_context_change(NodeProvidedContext),
     context.on_connection_change(ViewportProvidedConnection),
   ]
@@ -173,9 +198,10 @@ type Msg {
   NodeProvidedContext(id: String)
   ParentSetDisabled
   ParentSetName(value: String)
+  ParentSetTolerance(value: Int)
   ParentToggledDisabled
-  UserStartedConnection
   UserCompletedConnection
+  UserStartedConnection
   ViewportProvidedConnection(connection: Option(#(String, String)))
 }
 
@@ -204,6 +230,13 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         "", _ | _, "" -> component.set_pseudo_state("invalid")
         _, _ -> component.remove_pseudo_state("invalid")
       }
+
+      #(model, effect)
+    }
+
+    ParentSetTolerance(value:) -> {
+      let model = Model(..model, tolerance: value)
+      let effect = effect.none()
 
       #(model, effect)
     }
@@ -248,7 +281,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
 // VIEW ------------------------------------------------------------------------
 
-fn view(_) -> Element(Msg) {
+fn view(model: Model) -> Element(Msg) {
   element.fragment([
     html.style([], {
       "
@@ -259,8 +292,32 @@ fn view(_) -> Element(Msg) {
       :host(:hover) {
         cursor: crosshair;
       }
+
       "
     }),
     component.default_slot([], []),
+    case model.tolerance {
+      0 -> element.none()
+      _ -> view_tolerance_box(model.tolerance)
+    },
   ])
+}
+
+fn view_tolerance_box(value: Int) -> Element(Msg) {
+  let tolerance = "calc(100% + " <> int.to_string(value * 2) <> "px)"
+  let translate =
+    "translate(-"
+    <> int.to_string(value)
+    <> "px, -"
+    <> int.to_string(value)
+    <> "px)"
+
+  html.div(
+    [
+      attribute.style("width", tolerance),
+      attribute.style("height", tolerance),
+      attribute.style("transform", translate),
+    ],
+    [],
+  )
 }
