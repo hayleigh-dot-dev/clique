@@ -1,10 +1,10 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import clique/internal/context
+import clique/internal/number
 import clique/transform.{type Transform}
 import gleam/dynamic/decode
 import gleam/float
-import gleam/int
 import gleam/json
 import gleam/list
 import gleam/string
@@ -158,22 +158,15 @@ fn options() -> List(component.Option(Msg)) {
     }),
 
     component.on_attribute_change("gap", fn(value) {
-      let parse = fn(value) {
-        case int.parse(value) {
-          Ok(n) -> Ok(int.to_float(n))
-          Error(_) -> float.parse(value)
-        }
-      }
-
       case string.split(value, " ") |> list.map(string.trim) {
         [gap] ->
-          case parse(gap) {
+          case number.parse(gap) {
             Ok(value) -> Ok(ParentSetGap(x: value, y: value))
             Error(_) -> Error(Nil)
           }
 
         [gap_x, gap_y] ->
-          case parse(gap_x), parse(gap_y) {
+          case number.parse(gap_x), number.parse(gap_y) {
             Ok(x), Ok(y) -> Ok(ParentSetGap(x:, y:))
             _, _ -> Error(Nil)
           }
@@ -190,22 +183,15 @@ fn options() -> List(component.Option(Msg)) {
     }),
 
     component.on_attribute_change("offset", fn(value) {
-      let parse = fn(value) {
-        case int.parse(value) {
-          Ok(n) -> Ok(int.to_float(n))
-          Error(_) -> float.parse(value)
-        }
-      }
-
       case string.split(value, " ") |> list.map(string.trim) {
         [offset] ->
-          case parse(offset) {
+          case number.parse(offset) {
             Ok(value) -> Ok(ParentSetOffset(x: value, y: value))
             Error(_) -> Error(Nil)
           }
 
         [offset_x, offset_y] ->
-          case parse(offset_x), parse(offset_y) {
+          case number.parse(offset_x), number.parse(offset_y) {
             Ok(x), Ok(y) -> Ok(ParentSetOffset(x:, y:))
             _, _ -> Error(Nil)
           }
@@ -222,14 +208,7 @@ fn options() -> List(component.Option(Msg)) {
     }),
 
     component.on_attribute_change("size", fn(value) {
-      let parse = fn(value) {
-        case int.parse(value) {
-          Ok(n) -> Ok(int.to_float(n))
-          Error(_) -> float.parse(value)
-        }
-      }
-
-      case parse(value) {
+      case number.parse(value) {
         Ok(n) -> Ok(ParentSetSize(value: n))
         Error(_) -> Error(Nil)
       }

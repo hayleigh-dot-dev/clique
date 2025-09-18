@@ -5,6 +5,7 @@ import clique/handle
 import clique/internal/context
 import clique/internal/dom.{type HtmlElement}
 import clique/internal/drag.{type DragState}
+import clique/internal/number
 import clique/internal/prop.{type Prop, Controlled, Touched, Unchanged}
 import clique/node
 import clique/path
@@ -15,7 +16,6 @@ import gleam/dict.{type Dict}
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/float
-import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -216,18 +216,7 @@ fn options() -> List(component.Option(Msg)) {
     component.on_attribute_change("transform", fn(value) {
       case string.split(value, " ") |> list.map(string.trim) {
         [x, y, zoom] -> {
-          let parse = fn(value) {
-            case float.parse(value) {
-              Ok(n) -> Ok(n)
-              Error(_) ->
-                case int.parse(value) {
-                  Ok(i) -> Ok(int.to_float(i))
-                  Error(_) -> Error(Nil)
-                }
-            }
-          }
-
-          case parse(x), parse(y), parse(zoom) {
+          case number.parse(x), number.parse(y), number.parse(zoom) {
             Ok(x), Ok(y), Ok(zoom) ->
               Ok(ParentSetInitialTransform(transform.new(x:, y:, zoom:)))
             _, _, _ -> Error(Nil)

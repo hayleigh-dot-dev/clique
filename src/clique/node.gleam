@@ -3,12 +3,12 @@
 import clique/internal/context
 import clique/internal/dom.{type HtmlElement}
 import clique/internal/drag.{type DragState}
+import clique/internal/number
 import clique/internal/prop.{type Prop, Controlled, Touched, Unchanged}
 import gleam/bool
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/float
-import gleam/int
 import gleam/json
 import gleam/list
 import gleam/string
@@ -180,20 +180,9 @@ fn options() -> List(component.Option(Msg)) {
     }),
 
     component.on_attribute_change("position", fn(value) {
-      let parse = fn(value) {
-        case float.parse(value) {
-          Ok(n) -> Ok(n)
-          Error(_) ->
-            case int.parse(value) {
-              Ok(i) -> Ok(int.to_float(i))
-              Error(_) -> Error(Nil)
-            }
-        }
-      }
-
       case string.split(value, " ") |> list.map(string.trim) {
         [x, y] ->
-          case parse(x), parse(y) {
+          case number.parse(x), number.parse(y) {
             Ok(x), Ok(y) -> Ok(ParentSetInitialPosition(x: x, y: y))
             _, _ -> Error(Nil)
           }
