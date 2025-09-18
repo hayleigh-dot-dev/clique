@@ -32,6 +32,14 @@ pub fn register() -> Result(Nil, lustre.Error) {
   )
 }
 
+// TYPES -----------------------------------------------------------------------
+
+///
+///
+pub type Handle {
+  Handle(node: String, name: String)
+}
+
 // ELEMENTS --------------------------------------------------------------------
 
 ///
@@ -64,12 +72,12 @@ pub fn tolerance(value: Int) -> Attribute(msg) {
 
 ///
 ///
-pub fn on_connection_start(handler: fn(String, String) -> msg) -> Attribute(msg) {
+pub fn on_connection_start(handler: fn(Handle) -> msg) -> Attribute(msg) {
   event.on("clique:connection-start", {
     use node <- decode.subfield(["detail", "node"], decode.string)
-    use handle <- decode.subfield(["detail", "handle"], decode.string)
+    use name <- decode.subfield(["detail", "name"], decode.string)
 
-    decode.success(handler(node, handle))
+    decode.success(handler(Handle(node:, name:)))
   })
 }
 
@@ -77,7 +85,7 @@ fn emit_connection_start(node: String, handle: String) -> Effect(msg) {
   event.emit("clique:connection-start", {
     json.object([
       #("node", json.string(node)),
-      #("handle", json.string(handle)),
+      #("name", json.string(handle)),
     ])
   })
 }
@@ -85,13 +93,13 @@ fn emit_connection_start(node: String, handle: String) -> Effect(msg) {
 ///
 ///
 pub fn on_connection_complete(
-  handler: fn(#(String, String), #(String, String)) -> msg,
+  handler: fn(Handle, Handle) -> msg,
 ) -> Attribute(msg) {
   let handle_decoder = {
     use node <- decode.field("node", decode.string)
-    use handle <- decode.field("handle", decode.string)
+    use name <- decode.field("name", decode.string)
 
-    decode.success(#(node, handle))
+    decode.success(Handle(node:, name:))
   }
 
   event.on("clique:connection-complete", {
@@ -111,14 +119,14 @@ fn emit_connection_complete(
       #("from", {
         json.object([
           #("node", json.string(from.0)),
-          #("handle", json.string(from.1)),
+          #("name", json.string(from.1)),
         ])
       }),
 
       #("to", {
         json.object([
           #("node", json.string(to.0)),
-          #("handle", json.string(to.1)),
+          #("name", json.string(to.1)),
         ])
       }),
     ])

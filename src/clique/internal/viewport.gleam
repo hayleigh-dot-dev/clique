@@ -1,7 +1,7 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import clique/bounds.{type Bounds}
-import clique/handle
+import clique/handle.{type Handle, Handle}
 import clique/internal/context
 import clique/internal/dom.{type HtmlElement}
 import clique/internal/drag.{type DragState}
@@ -90,14 +90,14 @@ fn emit_resize(bounds: Bounds) -> Effect(msg) {
 ///
 ///
 pub fn on_connection_cancel(
-  handler: fn(#(String, String), Float, Float) -> msg,
+  handler: fn(Handle, Float, Float) -> msg,
 ) -> Attribute(msg) {
   event.on("clique:connection-cancel", {
     let handle_decoder = {
       use node <- decode.field("node", decode.string)
-      use handle <- decode.field("handle", decode.string)
+      use name <- decode.field("name", decode.string)
 
-      decode.success(#(node, handle))
+      decode.success(Handle(node:, name:))
     }
 
     use from <- decode.subfield(["detail", "from"], handle_decoder)
@@ -118,7 +118,7 @@ fn emit_connection_cancel(
       #("from", {
         json.object([
           #("node", json.string(from.0)),
-          #("handle", json.string(from.1)),
+          #("name", json.string(from.1)),
         ])
       }),
       #("x", json.float(x)),
@@ -245,7 +245,7 @@ type Msg {
   ParentUpdatedTransform(transform: Transform)
   UserCompletedConnection
   UserPannedViewport(x: Float, y: Float)
-  UserStartedConnection(node: String, handle: String)
+  UserStartedConnection(source: Handle)
   UserStartedPanning(x: Float, y: Float)
   UserStoppedPanning(x: Float, y: Float)
   UserZoomedViewport(client_x: Float, client_y: Float, delta: Float)
@@ -395,23 +395,28 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         }
       }
 
-    UserStartedConnection(node:, handle:) ->
-      case dict.get(model.handles, node) |> result.try(dict.get(_, handle)) {
-        Ok(start) -> {
-          let connection = #(node, handle)
-          let model = Model(..model, connection: Some(#(connection, start)))
-          let effect =
-            effect.batch([
-              context.provide_connection(Some(#(node, handle))),
-              component.set_pseudo_state("connecting"),
-              add_window_mousemove_listener(),
-            ])
+    UserStartedConnection(source:) -> {
+      let result = {
+        use handles <- result.try(dict.get(model.handles, source.node))
+        use start <- result.try(dict.get(handles, source.name))
 
-          #(model, effect)
-        }
+        let connection = #(source.node, source.name)
+        let model = Model(..model, connection: Some(#(connection, start)))
+        let effect =
+          effect.batch([
+            context.provide_connection(Some(connection)),
+            component.set_pseudo_state("connecting"),
+            add_window_mousemove_listener(),
+          ])
 
+        Ok(#(model, effect))
+      }
+
+      case result {
+        Ok(update) -> update
         Error(_) -> #(model, effect.none())
       }
+    }
 
     UserStartedPanning(x:, y:) -> {
       let model = Model(..model, panning: drag.start(x, y))

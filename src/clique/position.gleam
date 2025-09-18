@@ -3,13 +3,13 @@
 ///
 ///
 pub type Position {
-  TopLeft
   Top
+  TopLeft
   TopRight
   Right
-  BottomRight
   Bottom
   BottomLeft
+  BottomRight
   Left
 }
 
