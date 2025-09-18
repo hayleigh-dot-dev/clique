@@ -4,6 +4,7 @@ import clique/bounds.{type Bounds}
 import gleam/dynamic/decode.{type Decoder}
 import gleam/float
 import gleam/json.{type Json}
+import gleam/option.{type Option, None}
 
 // TYPES -----------------------------------------------------------------------
 
@@ -22,6 +23,16 @@ import gleam/json.{type Json}
 ///
 pub type Transform =
   #(Float, Float, Float)
+
+///
+///
+pub type FitOptions {
+  FitOptions(
+    padding: #(Float, Float),
+    max_zoom: Option(Float),
+    min_zoom: Option(Float),
+  )
+}
 
 // CONSTRUCTORS ----------------------------------------------------------------
 
@@ -60,33 +71,34 @@ pub fn decoder() -> Decoder(Transform) {
 }
 
 pub fn fit(into viewport: Bounds, box box: Bounds) -> Transform {
-  fit_with(viewport, box, #(0.0, 0.0))
+  fit_with(
+    viewport,
+    box,
+    FitOptions(padding: #(0.0, 0.0), min_zoom: None, max_zoom: None),
+  )
 }
 
 pub fn fit_with(
   into viewport: Bounds,
   box box: Bounds,
-  padding padding: #(Float, Float),
+  options options: FitOptions,
 ) -> Transform {
-  let viewport_width = bounds.width(viewport)
-  let viewport_height = bounds.height(viewport)
-  let box_width = bounds.width(box)
-  let box_height = bounds.height(box)
-  let box_x = bounds.x(box)
-  let box_y = bounds.y(box)
+  let scale_x = { viewport.2 -. options.padding.0 *. 2.0 } /. box.2
+  let scale_y = { viewport.3 -. options.padding.1 *. 2.0 } /. box.3
+  let unclamped_scale = float.min(scale_x, scale_y)
 
-  let scale_x = { viewport_width -. padding.0 *. 2.0 } /. box_width
-  let scale_y = { viewport_height -. padding.1 *. 2.0 } /. box_height
-  let scale = float.min(scale_x, scale_y)
+  let min_scale = option.unwrap(options.min_zoom, unclamped_scale)
+  let max_scale = option.unwrap(options.max_zoom, unclamped_scale)
+  let scale = float.max(min_scale, float.min(max_scale, unclamped_scale))
 
-  let scaled_box_width = box_width *. scale
-  let scaled_box_height = box_height *. scale
+  let scaled_box_width = box.2 *. scale
+  let scaled_box_height = box.3 *. scale
 
-  let center_x = { viewport_width -. scaled_box_width } /. 2.0
-  let center_y = { viewport_height -. scaled_box_height } /. 2.0
+  let center_x = { viewport.2 -. scaled_box_width } /. 2.0
+  let center_y = { viewport.3 -. scaled_box_height } /. 2.0
 
-  let translate_x = center_x -. { box_x *. scale }
-  let translate_y = center_y -. { box_y *. scale }
+  let translate_x = center_x -. { box.0 *. scale }
+  let translate_y = center_y -. { box.1 *. scale }
 
   #(translate_x, translate_y, scale)
 }
