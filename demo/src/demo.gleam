@@ -2,20 +2,24 @@
 
 import clique
 import clique/background
+import clique/bounds.{type Bounds}
 import clique/edge
-import clique/handle
+import clique/handle.{type Handle, Handle}
 import clique/node
+import clique/transform.{type Transform, FitOptions}
 import gleam/int
 import gleam/list
+import gleam/option.{Some}
 import lustre
 import lustre/attribute
+import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
 
 // MAIN ------------------------------------------------------------------------
 
 pub fn main() {
-  let app = lustre.simple(init:, update:, view:)
+  let app = lustre.application(init:, update:, view:)
 
   let assert Ok(_) = clique.register()
   let assert Ok(_) = lustre.start(app, "#app", Nil)
@@ -26,7 +30,12 @@ pub fn main() {
 // MODEL -----------------------------------------------------------------------
 
 type Model {
-  Model(nodes: List(Node), edges: List(Edge))
+  Model(
+    nodes: List(Node),
+    edges: List(Edge),
+    viewport: Bounds,
+    transform: Transform,
+  )
 }
 
 type Node {
@@ -34,19 +43,21 @@ type Node {
 }
 
 type Edge {
-  Edge(id: String, source: #(String, String), target: #(String, String))
+  Edge(id: String, source: Handle, target: Handle)
 }
 
 const count = 50
 
-fn init(_) -> Model {
+const columns = 5
+
+fn init(_) -> #(Model, Effect(Msg)) {
   let nodes =
     list.range(0, count - 1)
     |> list.map(fn(i) {
       Node(
         id: "node-" <> int.to_string(i),
-        x: int.to_float({ i % 2 } * 300),
-        y: int.to_float({ i / 2 } * 100),
+        x: int.to_float(150 - { i % columns } * 300),
+        y: int.to_float(150 - { i / columns } * 100),
         label: "Node " <> int.to_string(i),
       )
     })
@@ -62,24 +73,51 @@ fn init(_) -> Model {
           <> int.to_string(source_index)
           <> "-"
           <> int.to_string(target_index),
-        source: #("node-" <> int.to_string(source_index), "output"),
-        target: #("node-" <> int.to_string(target_index), "input"),
+        source: Handle("node-" <> int.to_string(source_index), "output"),
+        target: Handle("node-" <> int.to_string(target_index), "input"),
       )
     })
 
-  Model(nodes:, edges:)
+  let model =
+    Model(nodes:, edges:, viewport: bounds.init(), transform: transform.init())
+  let effect = measure_clique_viewport()
+
+  #(model, effect)
 }
+
+fn measure_clique_viewport() -> Effect(Msg) {
+  use dispatch, _ <- effect.before_paint()
+  let bounds = do_measure_clique_viewport()
+
+  dispatch(ViewportChangedSize(bounds))
+}
+
+@external(javascript, "./demo.ffi.mjs", "measure_clique_viewport")
+fn do_measure_clique_viewport() -> Bounds
 
 // UPDATE ----------------------------------------------------------------------
 
 type Msg {
-  NodeDragged(id: String, x: Float, y: Float)
-  UserConnectedNodes(source: #(String, String), target: #(String, String))
+  UserConnectedNodes(source: Handle, target: Handle)
+  UserDraggedNode(id: String, x: Float, y: Float)
+  UserDroppedConnection(source: Handle, x: Float, y: Float)
+  UserPannedViewport(transform: Transform)
+  ViewportChangedSize(#(Float, Float, Float, Float))
 }
 
-fn update(model: Model, msg: Msg) -> Model {
+fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
-    NodeDragged(id:, x:, y:) -> {
+    UserConnectedNodes(source:, target:) -> {
+      let id = "edge-" <> source.node <> "-" <> target.node
+      let edges = [Edge(id:, source:, target:), ..model.edges]
+
+      let model = Model(..model, edges:)
+      let effect = effect.none()
+
+      #(model, effect)
+    }
+
+    UserDraggedNode(id:, x:, y:) -> {
       let nodes =
         list.map(model.nodes, fn(node) {
           case node.id == id {
@@ -88,24 +126,71 @@ fn update(model: Model, msg: Msg) -> Model {
           }
         })
 
-      Model(..model, nodes:)
+      let model = Model(..model, nodes:)
+      let effect = effect.none()
+
+      #(model, effect)
     }
 
-    UserConnectedNodes(source:, target:) -> {
-      let id = "edge-" <> source.0 <> "-" <> target.0
-      let edges = [Edge(id:, source:, target:), ..model.edges]
+    UserDroppedConnection(source:, x:, y:) -> {
+      let id = int.to_string(list.length(model.nodes) + 1)
+      let node = Node(id: "node-" <> id, x:, y:, label: "Node " <> id)
+      let edges = [
+        Edge(
+          id: "edge-" <> source.node <> "-" <> node.id,
+          source:,
+          target: Handle(node.id, "input"),
+        ),
+        ..model.edges
+      ]
+      let model = Model(..model, nodes: [node, ..model.nodes], edges:)
+      let effect = effect.none()
 
-      Model(..model, edges:)
+      #(model, effect)
+    }
+
+    UserPannedViewport(transform:) -> {
+      let model = Model(..model, transform:)
+      let effect = effect.none()
+
+      #(model, effect)
+    }
+
+    ViewportChangedSize(viewport) -> {
+      let model =
+        Model(..model, viewport:, transform: fit(viewport, model.nodes))
+      let effect = effect.none()
+
+      #(model, effect)
     }
   }
+}
+
+fn fit(viewport: Bounds, nodes: List(Node)) -> Transform {
+  transform.fit_with(
+    box: list.fold(nodes, bounds.init(), fn(bounds, node) {
+      bounds.extend(bounds, bounds.new(node.x, node.y, 100.0, 100.0))
+    }),
+    into: viewport,
+    options: FitOptions(
+      padding: #(10.0, 10.0),
+      max_zoom: Some(2.0),
+      min_zoom: Some(0.5),
+    ),
+  )
 }
 
 // VIEW ------------------------------------------------------------------------
 
 fn view(model: Model) -> Element(Msg) {
-  html.div([attribute.class("p-24 w-screen h-screen font-mono")], [
+  html.div([attribute.class("p-24 space-y-8 w-screen h-screen font-mono")], [
     clique.root(
       [
+        clique.on_resize(ViewportChangedSize),
+        clique.transform(model.transform),
+        clique.on_pan(UserPannedViewport),
+        clique.on_zoom(UserPannedViewport),
+        clique.on_connection_cancel(UserDroppedConnection),
         attribute.class("w-full h-full bg-white rounded-lg shadow-md"),
         handle.on_connection_complete(UserConnectedNodes),
       ],
@@ -134,7 +219,7 @@ fn view(model: Model) -> Element(Msg) {
         clique.nodes({
           use Node(id:, ..) as data <- list.map(model.nodes)
           let key = id
-          let html = view_node(data, on_drag: NodeDragged)
+          let html = view_node(data, on_drag: UserDraggedNode)
 
           #(key, html)
         }),
@@ -154,29 +239,24 @@ fn view_node(
   ]
 
   clique.node(data.id, attributes, [
-    html.div(
-      [attribute.class("flex relative items-center py-1 px-2 aspect-square")],
-      [
-        clique.handle("input", [
-          attribute.class(
-            "absolute -left-1 top-1/4 bg-black rounded-full size-2",
-          ),
-        ]),
-        html.text(data.label),
-        clique.handle("output", [
-          attribute.class(
-            "absolute -right-1 top-3/4 bg-black rounded-full size-2",
-          ),
-        ]),
-      ],
-    ),
+    html.div([attribute.class("flex relative items-center py-1 px-2 size-16")], [
+      clique.handle("input", [
+        attribute.class("absolute -left-1 top-1/4 bg-black rounded-full size-2"),
+      ]),
+      html.text(data.label),
+      clique.handle("output", [
+        attribute.class(
+          "absolute -right-1 top-3/4 bg-black rounded-full size-2",
+        ),
+      ]),
+    ]),
   ])
 }
 
 fn view_edge(data: Edge) -> Element(msg) {
   clique.edge(data.source, data.target, [edge.bezier()], [
     html.p([attribute.class("px-1 text-xs bg-yellow-300 rounded")], [
-      html.text(data.source.0 <> " → " <> data.target.0),
+      html.text(data.source.node <> " → " <> data.target.node),
     ]),
   ])
 }
