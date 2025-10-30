@@ -3,4 +3,4 @@
 build/
 erl_crash.dump
 
-demo/priv
+demo/.lustre
