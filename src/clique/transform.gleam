@@ -123,6 +123,20 @@ pub fn zoom(transform: Transform) -> Float {
   transform.2
 }
 
+// MANIPULATIONS ---------------------------------------------------------------
+
+///
+///
+pub fn pan(transform: Transform, dx: Float, dy: Float) -> Transform {
+  #(transform.0 -. dx, transform.1 -. dy, transform.2)
+}
+
+///
+///
+pub fn offset(transform: Transform, dx: Float, dy: Float) -> Transform {
+  #(transform.0 +. dx, transform.1 +. dy, transform.2)
+}
+
 // CONVERSIONS -----------------------------------------------------------------
 
 ///
