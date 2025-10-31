@@ -6,9 +6,9 @@ import clique/internal/context
 import clique/internal/dom.{type HtmlElement}
 import clique/internal/drag.{type DragState}
 import clique/internal/number
+import clique/internal/path
 import clique/internal/prop.{type Prop, Controlled, Touched, Unchanged}
 import clique/node
-import clique/path
 import clique/position
 import clique/transform.{type Transform}
 import gleam/bool

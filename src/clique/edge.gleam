@@ -70,9 +70,9 @@ pub fn step() -> Attribute(msg) {
 
 ///
 ///
-pub fn custom(value: String) -> Attribute(msg) {
-  attribute("type", value)
-}
+// pub fn custom(value: String) -> Attribute(msg) {
+//   attribute("type", value)
+// }
 
 // EVENTS ----------------------------------------------------------------------
 

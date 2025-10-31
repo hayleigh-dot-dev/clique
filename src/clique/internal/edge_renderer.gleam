@@ -3,7 +3,7 @@
 import clique/edge
 import clique/internal/context
 import clique/internal/dom
-import clique/path
+import clique/internal/path
 import clique/position
 import gleam/dict.{type Dict}
 import gleam/dynamic/decode
@@ -27,15 +27,25 @@ pub const tag: String = "clique-edge-renderer"
 
 ///
 ///
-pub fn register(
-  // to_path: fn(String, #(Float, Float), #(Float, Float)) ->
-  //   #(Float, Float, Element(Msg)),
-) -> Result(Nil, lustre.Error) {
+pub fn register() -> Result(Nil, lustre.Error) {
+  let to_default_path = fn(
+    kind: String,
+    from: #(Float, Float),
+    to: #(Float, Float),
+  ) -> #(String, Float, Float) {
+    case kind {
+      "bezier" ->
+        path.bezier(from.0, from.1, position.Right, to.0, to.1, position.Left)
+      "step" -> path.step(from.0, from.1, to.0, to.1)
+      "linear" | _ -> path.straight(from.0, from.1, to.0, to.1)
+    }
+  }
+
   lustre.register(
     lustre.component(
       init:,
-      update:,
-      view: view(_, to_default_path),
+      update: fn(model, msg) { update(model, msg, to_default_path) },
+      view:,
       options: options(),
     ),
     tag,
@@ -53,21 +63,6 @@ pub fn root(
   element(tag, attributes, children)
 }
 
-///
-///
-pub fn to_default_path(
-  kind: String,
-  from: #(Float, Float),
-  to: #(Float, Float),
-) -> #(String, Float, Float) {
-  case kind {
-    "bezier" ->
-      path.bezier(from.0, from.1, position.Right, to.0, to.1, position.Left)
-    "step" -> path.step(from.0, from.1, to.0, to.1)
-    "linear" | _ -> path.straight(from.0, from.1, to.0, to.1)
-  }
-}
-
 // ATTRIBUTES ------------------------------------------------------------------
 
 // EVENTS ----------------------------------------------------------------------
@@ -78,11 +73,12 @@ type Model {
   Model(
     edges: Dict(#(String, String), String),
     handles: Dict(String, #(Float, Float)),
+    paths: Dict(#(String, String), #(String, Float, Float)),
   )
 }
 
 fn init(_) -> #(Model, Effect(Msg)) {
-  let model = Model(edges: dict.new(), handles: dict.new())
+  let model = Model(edges: dict.new(), handles: dict.new(), paths: dict.new())
   let effect = effect.none()
 
   #(model, effect)
@@ -109,24 +105,47 @@ pub opaque type Msg {
   EdgesMounted(edges: List(#(String, String, String)))
 }
 
-fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
+fn update(
+  model: Model,
+  msg: Msg,
+  to_path: fn(String, #(Float, Float), #(Float, Float)) ->
+    #(String, Float, Float),
+) -> #(Model, Effect(Msg)) {
   case msg {
     ParentProvidedHandles(handles) -> {
-      let model = Model(..model, handles:)
+      let paths =
+        dict.fold(model.edges, dict.new(), fn(paths, edge, kind) {
+          case dict.get(handles, edge.0), dict.get(handles, edge.1) {
+            Ok(from), Ok(to) ->
+              dict.insert(paths, edge, to_path(kind, from, to))
+            _, _ -> paths
+          }
+        })
+      let model = Model(..model, handles:, paths:)
 
       #(model, effect.none())
     }
 
     EdgeDisconnected(from:, to:) -> {
       let edges = dict.delete(model.edges, #(from, to))
-      let model = Model(..model, edges:)
+      let paths = dict.delete(model.paths, #(from, to))
+      let model = Model(..model, edges:, paths:)
 
       #(model, effect.none())
     }
 
     EdgeConnected(from:, to:, kind:) -> {
       let edges = dict.insert(model.edges, #(from, to), kind)
-      let model = Model(..model, edges:)
+      let paths = case
+        dict.get(model.handles, from),
+        dict.get(model.handles, to)
+      {
+        Ok(from_pos), Ok(to_pos) ->
+          dict.insert(model.paths, #(from, to), to_path(kind, from_pos, to_pos))
+
+        _, _ -> model.paths
+      }
+      let model = Model(..model, edges:, paths:)
 
       #(model, effect.none())
     }
@@ -134,7 +153,16 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     EdgeReconnected(prev:, next:, kind:) -> {
       let edges = dict.delete(model.edges, prev)
       let edges = dict.insert(edges, next, kind)
-      let model = Model(..model, edges:)
+      let paths = dict.delete(model.paths, prev)
+      let paths = case
+        dict.get(model.handles, next.0),
+        dict.get(model.handles, next.1)
+      {
+        Ok(from_pos), Ok(to_pos) ->
+          dict.insert(paths, next, to_path(kind, from_pos, to_pos))
+        _, _ -> paths
+      }
+      let model = Model(..model, edges:, paths:)
 
       #(model, effect.none())
     }
@@ -145,7 +173,19 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           dict.insert(acc, #(edge.0, edge.1), edge.2)
         })
 
-      let model = Model(..model, edges:)
+      let paths =
+        dict.fold(edges, dict.new(), fn(paths, edge, kind) {
+          case
+            dict.get(model.handles, edge.0),
+            dict.get(model.handles, edge.1)
+          {
+            Ok(from), Ok(to) ->
+              dict.insert(paths, edge, to_path(kind, from, to))
+            _, _ -> paths
+          }
+        })
+
+      let model = Model(..model, edges:, paths:)
 
       #(model, effect.none())
     }
@@ -154,77 +194,50 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
 
 // VIEW ------------------------------------------------------------------------
 
-fn view(
-  model: Model,
-  to_path: fn(String, #(Float, Float), #(Float, Float)) ->
-    #(String, Float, Float),
-) -> Element(Msg) {
+fn view(model: Model) -> Element(Msg) {
   let #(positions, edges) =
-    dict.fold(model.edges, #([], []), fn(acc, edge, kind) {
-      let key = edge.0 <> "-" <> edge.1
+    dict.fold(model.paths, #([], []), fn(acc, edge, path) {
+      let key = edge.0 <> "->" <> edge.1
 
-      case dict.get(model.handles, edge.0), dict.get(model.handles, edge.1) {
-        Ok(from), Ok(to) -> {
-          let #(path, cx, cy) = to_path(kind, from, to)
-          let path =
-            svg.path([
-              attribute("d", path),
-              attribute("fill", "none"),
-              attribute("stroke", "black"),
-              attribute("stroke-width", "2"),
-              attribute("shape-rendering", "geometricPrecision"),
-              attribute("stroke-linecap", "round"),
-              attribute("stroke-linejoin", "round"),
-              attribute("vector-effect", "non-scaling-stroke"),
-            ])
-          let edges = [#(key, path), ..acc.1]
+      let edges = [
+        #(
+          key,
+          svg.path([
+            attribute("d", path.0),
+            attribute("fill", "none"),
+            attribute("stroke", "black"),
+            attribute("stroke-width", "2"),
+            attribute("shape-rendering", "geometricPrecision"),
+            attribute("stroke-linecap", "round"),
+            attribute("stroke-linejoin", "round"),
+            attribute("vector-effect", "non-scaling-stroke"),
+          ]),
+        ),
+        ..acc.1
+      ]
 
-          // There's probably a better way than rendering a whole bunch of style
-          // tags.
-          let positions = [
-            #(key, {
-              html.style(
-                [],
-                "::slotted(clique-edge[from=\""
-                  <> edge.0
-                  <> "\"][to=\""
-                  <> edge.1
-                  <> "\"]) { --cx: "
-                  <> float.to_string(cx)
-                  <> "px; --cy: "
-                  <> float.to_string(cy)
-                  <> "px; }",
-              )
-            }),
-            ..acc.0
-          ]
+      // There's probably a better way than rendering a whole bunch of style
+      // tags.
+      let positions = [
+        #(key, {
+          html.style(
+            [],
+            "::slotted(clique-edge[from=\""
+              <> edge.0
+              <> "\"][to=\""
+              <> edge.1
+              <> "\"]) { --cx: "
+              <> float.to_string(path.1)
+              <> "px; --cy: "
+              <> float.to_string(path.2)
+              <> "px; }",
+          )
+        }),
+        ..acc.0
+      ]
 
-          #(positions, edges)
-        }
-
-        // If we don't yet have handle positions for this edge, hide it so the
-        // edge label doesn't just render at 0, 0.
-        _, _ -> {
-          let positions = [
-            #(key, {
-              html.style(
-                [],
-                "::slotted(clique-edge[from=\""
-                  <> edge.0
-                  <> "\"][to=\""
-                  <> edge.1
-                  <> "\"]) { display: none; }",
-              )
-            }),
-            ..acc.0
-          ]
-
-          #(positions, acc.1)
-        }
-      }
+      #(positions, edges)
     })
-
-  echo #(positions, edges)
 
   let handle_slotchange = {
     use target <- decode.field("target", dom.element_decoder())
