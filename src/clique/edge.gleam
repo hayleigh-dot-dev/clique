@@ -1,5 +1,6 @@
 // IMPORTS ---------------------------------------------------------------------
 
+import clique/handle.{type Handle, Handle}
 import gleam/dynamic/decode
 import gleam/json
 import gleam/option.{type Option, None, Some}
@@ -40,14 +41,14 @@ pub fn root(
 
 ///
 ///
-pub fn from(node: String, handle: String) -> Attribute(msg) {
-  attribute("from", node <> "." <> handle)
+pub fn from(handle: Handle) -> Attribute(msg) {
+  attribute("from", handle.node <> " " <> handle.name)
 }
 
 ///
 ///
-pub fn to(node: String, handle: String) -> Attribute(msg) {
-  attribute("to", node <> "." <> handle)
+pub fn to(handle: Handle) -> Attribute(msg) {
+  attribute("to", handle.node <> " " <> handle.name)
 }
 
 ///
@@ -76,38 +77,38 @@ pub fn step() -> Attribute(msg) {
 
 // EVENTS ----------------------------------------------------------------------
 
-pub fn on_disconnect(handler: fn(String, String) -> msg) -> Attribute(msg) {
+pub fn on_disconnect(handler: fn(Handle, Handle) -> msg) -> Attribute(msg) {
   event.on("clique:disconnect", {
-    use from <- decode.subfield(["detail", "from"], decode.string)
-    use to <- decode.subfield(["detail", "to"], decode.string)
+    use from <- decode.subfield(["detail", "from"], handle.decoder())
+    use to <- decode.subfield(["detail", "to"], handle.decoder())
 
     decode.success(handler(from, to))
   })
 }
 
-fn emit_disconnect(from: String, to: String) -> Effect(msg) {
+fn emit_disconnect(from: Handle, to: Handle) -> Effect(msg) {
   event.emit("clique:disconnect", {
     json.object([
-      #("from", json.string(from)),
-      #("to", json.string(to)),
+      #("from", handle.to_json(from)),
+      #("to", handle.to_json(to)),
     ])
   })
 }
 
 pub fn on_reconnect(
-  handler: fn(#(String, String), #(String, String), String) -> msg,
+  handler: fn(#(Handle, Handle), #(Handle, Handle), String) -> msg,
 ) -> Attribute(msg) {
   event.on("clique:reconnect", {
     use old <- decode.subfield(["detail", "old"], {
-      use from <- decode.field("from", decode.string)
-      use to <- decode.field("to", decode.string)
+      use from <- decode.field("from", handle.decoder())
+      use to <- decode.field("to", handle.decoder())
 
       decode.success(#(from, to))
     })
 
     use new <- decode.subfield(["detail", "new"], {
-      use from <- decode.field("from", decode.string)
-      use to <- decode.field("to", decode.string)
+      use from <- decode.field("from", handle.decoder())
+      use to <- decode.field("to", handle.decoder())
 
       decode.success(#(from, to))
     })
@@ -119,50 +120,54 @@ pub fn on_reconnect(
 }
 
 fn emit_reconnect(
-  old: #(String, String),
-  new: #(String, String),
+  old: #(Handle, Handle),
+  new: #(Handle, Handle),
   new_kind: String,
 ) -> Effect(msg) {
   event.emit("clique:reconnect", {
     json.object([
-      #(
-        "old",
-        json.object([#("from", json.string(old.0)), #("to", json.string(old.1))]),
-      ),
-      #(
-        "new",
-        json.object([#("from", json.string(new.0)), #("to", json.string(new.1))]),
-      ),
+      #("old", {
+        json.object([
+          #("from", handle.to_json(old.0)),
+          #("to", handle.to_json(old.1)),
+        ])
+      }),
+      #("new", {
+        json.object([
+          #("from", handle.to_json(new.0)),
+          #("to", handle.to_json(new.1)),
+        ])
+      }),
       #("type", json.string(new_kind)),
     ])
   })
 }
 
-pub fn on_connect(handler: fn(String, String, String) -> msg) -> Attribute(msg) {
+pub fn on_connect(handler: fn(Handle, Handle, String) -> msg) -> Attribute(msg) {
   event.on("clique:connect", {
-    use from <- decode.subfield(["detail", "from"], decode.string)
-    use to <- decode.subfield(["detail", "to"], decode.string)
+    use from <- decode.subfield(["detail", "from"], handle.decoder())
+    use to <- decode.subfield(["detail", "to"], handle.decoder())
     use kind <- decode.subfield(["detail", "type"], decode.string)
 
     decode.success(handler(from, to, kind))
   })
 }
 
-fn emit_connect(from: String, to: String, kind: String) -> Effect(msg) {
+fn emit_connect(from: Handle, to: Handle, kind: String) -> Effect(msg) {
   event.emit("clique:connect", {
     json.object([
-      #("from", json.string(from)),
-      #("to", json.string(to)),
+      #("from", handle.to_json(from)),
+      #("to", handle.to_json(to)),
       #("type", json.string(kind)),
     ])
   })
 }
 
 fn emit_change(
-  old_from: Option(String),
-  old_to: Option(String),
-  new_from: Option(String),
-  new_to: Option(String),
+  old_from: Option(Handle),
+  old_to: Option(Handle),
+  new_from: Option(Handle),
+  new_to: Option(Handle),
   kind: String,
 ) -> Effect(msg) {
   let new_kind = case kind {
@@ -186,7 +191,7 @@ fn emit_change(
 // MODEL -----------------------------------------------------------------------
 
 type Model {
-  Model(from: Option(String), to: Option(String), kind: String)
+  Model(from: Option(Handle), to: Option(Handle), kind: String)
 }
 
 fn init(_) -> #(Model, Effect(Msg)) {
@@ -205,9 +210,9 @@ fn options() -> List(component.Option(Msg)) {
     //
     //
     component.on_attribute_change("from", fn(value) {
-      case string.split(value, ".") {
-        [node, handle] if node != "" && handle != "" ->
-          Ok(ParentSetFrom(value:))
+      case string.split(value, " ") {
+        [node, name] if node != "" && name != "" ->
+          Ok(ParentSetFrom(Handle(node:, name:)))
         _ -> Ok(ParentRemovedFrom)
       }
     }),
@@ -215,8 +220,9 @@ fn options() -> List(component.Option(Msg)) {
     //
     //
     component.on_attribute_change("to", fn(value) {
-      case string.split(value, ".") {
-        [node, handle] if node != "" && handle != "" -> Ok(ParentSetTo(value:))
+      case string.split(value, " ") {
+        [node, name] if node != "" && name != "" ->
+          Ok(ParentSetTo(value: Handle(node:, name:)))
         _ -> Ok(ParentRemovedTo)
       }
     }),
@@ -237,8 +243,8 @@ fn options() -> List(component.Option(Msg)) {
 type Msg {
   ParentRemovedFrom
   ParentRemovedTo
-  ParentSetFrom(value: String)
-  ParentSetTo(value: String)
+  ParentSetFrom(value: Handle)
+  ParentSetTo(value: Handle)
   ParentSetType(value: String)
 }
 

@@ -4,7 +4,6 @@ import clique/background
 import clique/bounds.{type Bounds}
 import clique/edge
 import clique/handle.{type Handle}
-import clique/internal/edge_renderer
 import clique/internal/viewport
 import clique/node
 import clique/transform.{type Transform}
@@ -23,7 +22,6 @@ import lustre/element/keyed
 pub fn register() -> Result(Nil, lustre.Error) {
   use _ <- result.try(background.register())
   use _ <- result.try(edge.register())
-  use _ <- result.try(edge_renderer.register())
   use _ <- result.try(handle.register())
   use _ <- result.try(node.register())
   use _ <- result.try(viewport.register())
@@ -50,12 +48,10 @@ pub fn background(attributes: List(Attribute(msg))) -> Element(msg) {
   background.root([component.slot("background"), ..attributes], [])
 }
 
-/// A container for all the [edges](#edge) in the graph. Children of this element
-/// should be a keyed list of [`edge`](#edge) elements where every key is unique.
 ///
 ///
-pub fn edges(all: List(#(String, Element(msg)))) -> Element(msg) {
-  keyed.element(edge_renderer.tag, [], all)
+pub fn edges(children: List(#(String, Element(msg)))) -> Element(msg) {
+  keyed.fragment(children)
 }
 
 /// An [edge](https://hexdocs.pm/clique/clique/edge.html) connects two nodes together.
@@ -75,11 +71,7 @@ pub fn edge(
   children: List(Element(msg)),
 ) -> Element(msg) {
   edge.root(
-    [
-      edge.from(source.node, source.name),
-      edge.to(target.node, target.name),
-      ..attributes
-    ],
+    [component.slot("edges"), edge.from(source), edge.to(target), ..attributes],
     children,
   )
 }
@@ -88,8 +80,8 @@ pub fn edge(
 /// should be a keyed list of [`node`](#node) elements where every key is a unique
 /// id.
 ///
-pub fn nodes(all: List(#(String, Element(msg)))) -> Element(msg) {
-  keyed.fragment(all)
+pub fn nodes(children: List(#(String, Element(msg)))) -> Element(msg) {
+  keyed.fragment(children)
 }
 
 /// A node is a draggable element in the graph. By rendering one or more [handles](#handle)

@@ -88,6 +88,20 @@ fn emit_change(dx dx: Float, dy dy: Float) -> Effect(msg) {
 
 ///
 ///
+pub fn on_select(handler: fn(String) -> msg) -> Attribute(msg) {
+  event.on("clique:select", {
+    use id <- decode.subfield(["target", "id"], decode.string)
+
+    decode.success(handler(id))
+  })
+}
+
+fn emit_select() -> Effect(msg) {
+  event.emit("clique:select", json.null())
+}
+
+///
+///
 pub fn on_drag(
   handler: fn(String, Float, Float, Float, Float) -> msg,
 ) -> Attribute(msg) {
@@ -211,6 +225,7 @@ type Msg {
   ParentSetInitialPosition(x: Float, y: Float)
   ParentUpdatedPosition(x: Float, y: Float)
   UserDraggedNode(x: Float, y: Float)
+  UserSelectedNode
   UserStartedDrag(x: Float, y: Float)
   UserStoppedDrag
 }
@@ -305,11 +320,14 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       #(model, effect)
     }
 
+    UserSelectedNode -> #(model, emit_select())
+
     UserStartedDrag(x:, y:) -> {
       let dragging = drag.start(x, y)
       let model = Model(..model, dragging:)
       let effect =
         effect.batch([
+          emit_select(),
           add_window_mousemove_listener(),
           component.set_pseudo_state("dragging"),
         ])
@@ -380,27 +398,22 @@ fn view(_) -> Element(Msg) {
     use client_x <- decode.field("clientX", decode.float)
     use client_y <- decode.field("clientY", decode.float)
 
-    let dispatch = UserStartedDrag(x: client_x, y: client_y)
-
-    let success =
+    let drag =
       decode.success(event.handler(
-        dispatch:,
+        dispatch: UserStartedDrag(x: client_x, y: client_y),
         prevent_default: False,
         stop_propagation: True,
       ))
 
-    let failure =
-      decode.failure(
-        event.handler(
-          dispatch:,
-          prevent_default: False,
-          stop_propagation: False,
-        ),
-        "",
-      )
+    let select =
+      decode.success(event.handler(
+        dispatch: UserSelectedNode,
+        prevent_default: False,
+        stop_propagation: False,
+      ))
 
     case dom.attribute(target, "data-clique-disable") {
-      Ok("") | Error(_) -> success
+      Ok("") | Error(_) -> drag
 
       Ok(disable) -> {
         let nodrag =
@@ -410,8 +423,8 @@ fn view(_) -> Element(Msg) {
           |> list.contains("drag")
 
         case nodrag {
-          True -> failure
-          False -> success
+          True -> select
+          False -> drag
         }
       }
     }

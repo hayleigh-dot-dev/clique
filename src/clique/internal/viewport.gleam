@@ -1,10 +1,12 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import clique/bounds.{type Bounds}
+import clique/edge
 import clique/handle.{type Handle, Handle}
 import clique/internal/context
 import clique/internal/dom.{type HtmlElement}
 import clique/internal/drag.{type DragState}
+import clique/internal/edge_lookup.{type EdgeLookup}
 import clique/internal/number
 import clique/internal/path
 import clique/internal/prop.{type Prop, Controlled, Touched, Unchanged}
@@ -27,6 +29,7 @@ import lustre/component
 import lustre/effect.{type Effect}
 import lustre/element.{type Element, element}
 import lustre/element/html
+import lustre/element/keyed
 import lustre/element/svg
 import lustre/event
 
@@ -157,11 +160,18 @@ type Model {
   Model(
     transform: Prop(Transform),
     observer: Option(NodeResizeObserver),
-    handles: Dict(String, Dict(String, #(Float, Float))),
+    handles: Dict(Handle, #(Float, Float)),
+    edges: EdgeLookup,
     panning: DragState,
-    connection: Option(#(#(String, String), #(Float, Float))),
+    connection: Option(#(Handle, #(Float, Float))),
     bounds: Bounds,
+    selected: Option(Selected),
   )
+}
+
+type Selected {
+  Node(id: String)
+  Edge(id: String)
 }
 
 type NodeResizeObserver
@@ -172,9 +182,11 @@ fn init(_) -> #(Model, Effect(Msg)) {
       transform: prop.new(transform.init()),
       observer: None,
       handles: dict.new(),
+      edges: edge_lookup.new(),
       panning: drag.Settled,
       connection: None,
       bounds: bounds.init(),
+      selected: None,
     )
 
   let effect =
@@ -183,7 +195,6 @@ fn init(_) -> #(Model, Effect(Msg)) {
       context.provide_scale(model.transform.value.2),
       context.provide_connection(None),
       set_transform(model.transform),
-      context.provide_handles(model.handles),
       add_resize_observer(),
     ])
 
@@ -236,6 +247,14 @@ fn options() -> List(component.Option(Msg)) {
 // UPDATE ----------------------------------------------------------------------
 
 type Msg {
+  EdgeDisconnected(from: Handle, to: Handle)
+  EdgeConnected(from: Handle, to: Handle, kind: String)
+  EdgeReconnected(
+    prev: #(Handle, Handle),
+    next: #(Handle, Handle),
+    kind: String,
+  )
+  EdgesMounted(edges: List(#(Handle, Handle, String)))
   InertiaSimulationTicked
   NodeMounted(element: HtmlElement, id: String)
   NodeMoved(id: String, dx: Float, dy: Float)
@@ -245,6 +264,8 @@ type Msg {
   ParentUpdatedTransform(transform: Transform)
   UserCompletedConnection
   UserPannedViewport(x: Float, y: Float)
+  UserSelectedEdge(id: String)
+  UserSelectedNode(id: String)
   UserStartedConnection(source: Handle)
   UserStartedPanning(x: Float, y: Float)
   UserStoppedPanning(x: Float, y: Float)
@@ -254,48 +275,148 @@ type Msg {
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
+    EdgeDisconnected(from:, to:) -> {
+      let edges = edge_lookup.delete(model.edges, from, to)
+      let model = Model(..model, edges:)
+      let effect = effect.none()
+
+      #(model, effect)
+    }
+
+    EdgeConnected(from: source, to: target, kind:) -> {
+      case dict.get(model.handles, source), dict.get(model.handles, target) {
+        Ok(from), Ok(to) -> {
+          let edges =
+            edge_lookup.insert(model.edges, source, from, target, to, kind)
+          let model = Model(..model, edges:)
+          let effect = effect.none()
+
+          #(model, effect)
+        }
+
+        _, _ -> #(model, effect.none())
+      }
+    }
+
+    EdgeReconnected(prev:, next:, kind:) -> {
+      let edges = edge_lookup.delete(model.edges, prev.0, prev.1)
+
+      case dict.get(model.handles, next.0), dict.get(model.handles, next.1) {
+        Ok(from), Ok(to) -> {
+          let edges = edge_lookup.insert(edges, next.0, from, next.1, to, kind)
+          let model = Model(..model, edges:)
+          let effect = effect.none()
+
+          #(model, effect)
+        }
+
+        _, _ -> {
+          let model = Model(..model, edges:)
+          let effect = effect.none()
+
+          #(model, effect)
+        }
+      }
+    }
+
+    EdgesMounted(edges:) -> {
+      let edges =
+        list.fold(edges, edge_lookup.new(), fn(edges, edge) {
+          let source = edge.0
+          let target = edge.1
+
+          case edge_lookup.get(model.edges, source, target) {
+            Ok(existing) ->
+              edge_lookup.insert_edge(edges, source, target, existing)
+
+            Error(_) -> {
+              let from = dict.get(model.handles, edge.0)
+              let to = dict.get(model.handles, edge.1)
+
+              case from, to {
+                Ok(from), Ok(to) ->
+                  edge_lookup.insert(edges, edge.0, from, edge.1, to, edge.2)
+
+                Ok(from), Error(_) ->
+                  edge_lookup.insert(
+                    edges,
+                    edge.0,
+                    from,
+                    edge.1,
+                    #(0.0, 0.0),
+                    edge.2,
+                  )
+
+                Error(_), Ok(to) ->
+                  edge_lookup.insert(
+                    edges,
+                    edge.0,
+                    #(0.0, 0.0),
+                    edge.1,
+                    to,
+                    edge.2,
+                  )
+
+                _, _ ->
+                  edge_lookup.insert(
+                    edges,
+                    edge.0,
+                    #(0.0, 0.0),
+                    edge.1,
+                    #(0.0, 0.0),
+                    edge.2,
+                  )
+              }
+            }
+          }
+        })
+
+      let model = Model(..model, edges:)
+      let effect = effect.none()
+
+      #(model, effect)
+    }
+
     NodeMounted(id: _, element:) ->
       case model.observer {
         Some(observer) -> #(model, observe_node(observer, element))
         None -> #(model, effect.none())
       }
 
-    NodeMoved(id: node, dx:, dy:) ->
-      case dict.get(model.handles, node) {
-        Ok(node_handles) -> {
-          let handles =
-            node_handles
-            |> dict.map_values(fn(_, position) {
-              #(position.0 +. dx, position.1 +. dy)
-            })
-            |> dict.insert(model.handles, node, _)
-          let model = Model(..model, handles:)
-          let effect = context.provide_handles(handles)
+    NodeMoved(id: node, dx:, dy:) -> {
+      let handles =
+        dict.fold(model.handles, dict.new(), fn(handles, key, position) {
+          case key.node == node {
+            True ->
+              dict.insert(handles, key, #(position.0 +. dx, position.1 +. dy))
+            False -> dict.insert(handles, key, position)
+          }
+        })
 
-          #(model, effect)
-        }
+      let edges = edge_lookup.update_node(model.edges, node, #(dx, dy))
+      let model = Model(..model, handles:, edges:)
+      let effect = effect.none()
 
-        Error(_) -> #(model, effect.none())
-      }
+      #(model, effect)
+    }
 
     NodesResized(changes:) -> {
-      let handles = {
-        use all, #(node, handle, x, y) <- list.fold(changes, model.handles)
-        let x = { x -. model.transform.value.0 } /. model.transform.value.2
-        let y = { y -. model.transform.value.1 } /. model.transform.value.2
-        let position = #(x, y)
+      let #(handles, edges) =
+        list.fold(changes, #(model.handles, model.edges), fn(acc, change) {
+          let position = #(
+            { change.2 -. model.transform.value.0 } /. model.transform.value.2,
+            { change.3 -. model.transform.value.1 } /. model.transform.value.2,
+          )
 
-        case dict.get(all, node) {
-          Ok(for_node) ->
-            dict.insert(all, node, dict.insert(for_node, handle, position))
+          let handle = Handle(change.0, change.1)
+          let handles = dict.insert(acc.0, handle, position)
+          let edges = edge_lookup.update(acc.1, handle, position)
 
-          Error(_) ->
-            dict.insert(all, node, dict.from_list([#(handle, position)]))
-        }
-      }
+          #(handles, edges)
+        })
 
-      let model = Model(..model, handles:)
-      let effect = context.provide_handles(handles)
+      let model = Model(..model, handles:, edges:)
+      let effect = effect.none()
 
       #(model, effect)
     }
@@ -395,25 +516,34 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         }
       }
 
+    UserSelectedEdge(id:) -> {
+      let model = Model(..model, selected: Some(Edge(id:)))
+      let effect = effect.none()
+
+      #(model, effect)
+    }
+
+    UserSelectedNode(id:) -> {
+      let model = Model(..model, selected: Some(Node(id:)))
+      let effect = effect.none()
+
+      #(model, effect)
+    }
+
     UserStartedConnection(source:) -> {
-      let result = {
-        use handles <- result.try(dict.get(model.handles, source.node))
-        use start <- result.try(dict.get(handles, source.name))
+      case dict.get(model.handles, source) {
+        Ok(from) -> {
+          let model = Model(..model, connection: Some(#(source, from)))
+          let effect =
+            effect.batch([
+              context.provide_connection(Some(#(source.node, source.name))),
+              component.set_pseudo_state("connecting"),
+              add_window_mousemove_listener(),
+            ])
 
-        let connection = #(source.node, source.name)
-        let model = Model(..model, connection: Some(#(connection, start)))
-        let effect =
-          effect.batch([
-            context.provide_connection(Some(connection)),
-            component.set_pseudo_state("connecting"),
-            add_window_mousemove_listener(),
-          ])
+          #(model, effect)
+        }
 
-        Ok(#(model, effect))
-      }
-
-      case result {
-        Ok(update) -> update
         Error(_) -> #(model, effect.none())
       }
     }
@@ -441,7 +571,11 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       let effect = case model.connection {
         Some(from) ->
           effect.batch([
-            emit_connection_cancel(from.0, world_x, world_y),
+            emit_connection_cancel(
+              #({ from.0 }.node, { from.0 }.name),
+              world_x,
+              world_y,
+            ),
             component.remove_pseudo_state("connecting"),
             context.provide_connection(None),
           ])
@@ -595,6 +729,76 @@ fn do_observe_node(observer: NodeResizeObserver, node: HtmlElement) -> Nil
 // VIEW ------------------------------------------------------------------------
 
 fn view(model: Model) -> Element(Msg) {
+  let handle_slotchange = {
+    use target <- decode.field("target", dom.element_decoder())
+    let assigned_elements = dom.assigned_elements(target)
+    let edges =
+      list.filter_map(assigned_elements, fn(element) {
+        use from <- result.try(dom.attribute(element, "from"))
+        use to <- result.try(dom.attribute(element, "to"))
+        let kind = dom.attribute(element, "type") |> result.unwrap("bezier")
+
+        case string.split(from, " "), string.split(to, " ") {
+          [from_node, from_name], [to_node, to_name]
+            if from_node != ""
+            && from_name != ""
+            && to_node != ""
+            && to_name != ""
+          -> Ok(#(Handle(from_node, from_name), Handle(to_node, to_name), kind))
+
+          _, _ -> Error(Nil)
+        }
+      })
+
+    decode.success(EdgesMounted(edges))
+  }
+
+  let #(positions, edges) =
+    edge_lookup.fold(model.edges, #([], []), fn(acc, key, edge) {
+      let edges = [
+        #(
+          key,
+          svg.path([
+            attribute("d", edge.path),
+            attribute("fill", "none"),
+            attribute("stroke", "black"),
+            attribute("stroke-width", "2"),
+            attribute("shape-rendering", "geometricPrecision"),
+            attribute("stroke-linecap", "round"),
+            attribute("stroke-linejoin", "round"),
+            attribute("vector-effect", "non-scaling-stroke"),
+          ]),
+        ),
+        ..acc.1
+      ]
+
+      // There's probably a better way than rendering a whole bunch of style
+      // tags.
+      let positions = [
+        #(key, {
+          html.style(
+            [],
+            "::slotted(clique-edge[from=\""
+              <> edge.source.node
+              <> " "
+              <> edge.source.name
+              <> "\"][to=\""
+              <> edge.target.node
+              <> " "
+              <> edge.target.name
+              <> "\"]) { --cx: "
+              <> float.to_string(edge.cx)
+              <> "px; --cy: "
+              <> float.to_string(edge.cy)
+              <> "px; }",
+          )
+        }),
+        ..acc.0
+      ]
+
+      #(positions, edges)
+    })
+
   element.fragment([
     html.style([], {
       "
@@ -643,6 +847,10 @@ fn view(model: Model) -> Element(Msg) {
           width: 100%;
       }
 
+      slot[name=\"edges\"] {
+        display: none;
+      }
+
       #connection-line {
         width: 100%;
         height: 100%;
@@ -658,12 +866,44 @@ fn view(model: Model) -> Element(Msg) {
 
     view_container([
       component.named_slot("background", [], []),
+      component.named_slot(
+        "edges",
+        [
+          event.on("slotchange", handle_slotchange),
+          edge.on_connect(EdgeConnected),
+          edge.on_disconnect(EdgeDisconnected),
+          edge.on_reconnect(EdgeReconnected),
+        ],
+        [],
+      ),
+
+      keyed.fragment(positions),
 
       view_viewport([
+        keyed.namespaced(
+          svg.namespace,
+          "svg",
+          [
+            attribute("width", "100%"),
+            attribute("height", "100%"),
+            attribute("shape-rendering", "geometricPrecision"),
+            attribute.styles([
+              #("overflow", "visible"),
+              #("position", "absolute"),
+              #("top", "0"),
+              #("left", "0"),
+              #("will-change", "transform"),
+              #("pointer-events", "none"),
+            ]),
+          ],
+          edges,
+        ),
+
         component.default_slot(
           [
             node.on_mount(NodeMounted),
             node.on_change(NodeMoved),
+            node.on_select(UserSelectedNode),
             handle.on_connection_start(UserStartedConnection),
             handle.on_connection_complete(fn(_, _) { UserCompletedConnection }),
           ],
@@ -671,8 +911,8 @@ fn view(model: Model) -> Element(Msg) {
         ),
 
         case model.connection {
-          Some(#(#(node, handle), end)) ->
-            view_connection_line(model.handles, node, handle, end)
+          Some(#(handle, end)) ->
+            view_connection_line(model.handles, handle, end)
           None -> element.none()
         },
       ]),
@@ -709,21 +949,14 @@ fn view_container(children: List(Element(Msg))) -> Element(Msg) {
         "",
       )
 
-    case dom.attribute(target, "data-clique-disable") {
-      Ok("") | Error(_) -> success
+    let ignore =
+      dom.nearest(target, "[data-clique-disable~=\"drag\"]")
+      |> result.lazy_or(fn() { dom.nearest(target, "[slot=\"overlay\"]") })
+      |> result.is_ok
 
-      Ok(disable) -> {
-        let nodrag =
-          disable
-          |> string.split(" ")
-          |> list.map(string.trim)
-          |> list.contains("drag")
-
-        case nodrag {
-          True -> failure
-          False -> success
-        }
-      }
+    case ignore {
+      True -> failure
+      False -> success
     }
   }
 
@@ -755,18 +988,15 @@ fn view_viewport(children: List(Element(Msg))) -> Element(Msg) {
 // VIEW CONNECTION LINE --------------------------------------------------------
 
 fn view_connection_line(
-  handles: Dict(String, Dict(String, #(Float, Float))),
-  from_node: String,
-  from_handle: String,
+  handles: Dict(Handle, #(Float, Float)),
+  handle: Handle,
   to: #(Float, Float),
 ) -> Element(msg) {
-  let result = {
-    use handles <- result.try(dict.get(handles, from_node))
-    use from <- result.try(dict.get(handles, from_handle))
-    let #(path, _, _) =
-      path.bezier(from.0, from.1, position.Right, to.0, to.1, position.Left)
+  case dict.get(handles, handle) {
+    Ok(from) -> {
+      let #(path, _, _) =
+        path.bezier(from.0, from.1, position.Right, to.0, to.1, position.Left)
 
-    Ok(
       html.svg([attribute.id("connection-line")], [
         svg.path([
           attribute("d", path),
@@ -774,12 +1004,9 @@ fn view_connection_line(
           attribute("stroke", "#000"),
           attribute("stroke-width", "2"),
         ]),
-      ]),
-    )
-  }
+      ])
+    }
 
-  case result {
-    Ok(svg) -> svg
     Error(_) -> element.none()
   }
 }

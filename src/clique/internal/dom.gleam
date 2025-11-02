@@ -48,6 +48,12 @@ fn do_stop_propagation(event: Dynamic, yes: Bool) -> Nil
 @external(javascript, "./dom.ffi.mjs", "assigned_elements")
 pub fn assigned_elements(_slot: HtmlElement) -> List(HtmlElement)
 
+@external(javascript, "./dom.ffi.mjs", "nearest")
+pub fn nearest(
+  element: HtmlElement,
+  selector: String,
+) -> Result(HtmlElement, Nil)
+
 @external(javascript, "./dom.ffi.mjs", "tag")
 pub fn tag(element: HtmlElement) -> String
 

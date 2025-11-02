@@ -4,9 +4,9 @@ import clique/internal/context
 import clique/internal/dom
 import clique/node
 import clique/position.{type Position}
-import gleam/dynamic/decode
+import gleam/dynamic/decode.{type Decoder}
 import gleam/int
-import gleam/json
+import gleam/json.{type Json}
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import lustre
@@ -72,12 +72,29 @@ pub fn tolerance(value: Int) -> Attribute(msg) {
 
 ///
 ///
+pub fn decoder() -> Decoder(Handle) {
+  use node <- decode.field("node", decode.string)
+  use name <- decode.field("name", decode.string)
+
+  decode.success(Handle(node:, name:))
+}
+
+///
+///
+pub fn to_json(handle: Handle) -> Json {
+  json.object([
+    #("node", json.string(handle.node)),
+    #("name", json.string(handle.name)),
+  ])
+}
+
+///
+///
 pub fn on_connection_start(handler: fn(Handle) -> msg) -> Attribute(msg) {
   event.on("clique:connection-start", {
-    use node <- decode.subfield(["detail", "node"], decode.string)
-    use name <- decode.subfield(["detail", "name"], decode.string)
+    use handle <- decode.field("detail", decoder())
 
-    decode.success(handler(Handle(node:, name:)))
+    decode.success(handler(handle))
   })
 }
 
@@ -95,16 +112,9 @@ fn emit_connection_start(node: String, handle: String) -> Effect(msg) {
 pub fn on_connection_complete(
   handler: fn(Handle, Handle) -> msg,
 ) -> Attribute(msg) {
-  let handle_decoder = {
-    use node <- decode.field("node", decode.string)
-    use name <- decode.field("name", decode.string)
-
-    decode.success(Handle(node:, name:))
-  }
-
   event.on("clique:connection-complete", {
-    use from <- decode.subfield(["detail", "from"], handle_decoder)
-    use to <- decode.subfield(["detail", "to"], handle_decoder)
+    use from <- decode.subfield(["detail", "from"], decoder())
+    use to <- decode.subfield(["detail", "to"], decoder())
 
     decode.success(handler(from, to))
   })

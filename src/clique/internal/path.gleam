@@ -4,6 +4,23 @@ import clique/position.{
 }
 import gleam/float
 
+//
+
+///
+///
+pub fn default(
+  kind: String,
+  from: #(Float, Float),
+  to: #(Float, Float),
+) -> #(String, Float, Float) {
+  case kind {
+    "bezier" ->
+      bezier(from.0, from.1, position.Right, to.0, to.1, position.Left)
+    "step" -> step(from.0, from.1, to.0, to.1)
+    "linear" | _ -> straight(from.0, from.1, to.0, to.1)
+  }
+}
+
 // STRAIGHT PATH ---------------------------------------------------------------
 
 ///

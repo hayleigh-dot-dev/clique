@@ -24,6 +24,16 @@ export const assigned_elements = (slot) => {
   }
 };
 
+export const nearest = (element, selector) => {
+  const found = element.closest(selector);
+
+  if (found) {
+    return new Ok(found);
+  } else {
+    return new Error(undefined);
+  }
+};
+
 export const tag = (element) => element.localName;
 
 export const text_content = (element) => element.textContent;
