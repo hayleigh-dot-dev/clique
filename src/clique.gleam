@@ -41,14 +41,17 @@ pub fn root(
   viewport.root(attributes, children)
 }
 
-/// Render a patterned [background](https://hexdocs.pm/clique/clique/background.html)
-/// for the graph.
+/// Render a patterned [background](./background.html) for the graph.
 ///
 pub fn background(attributes: List(Attribute(msg))) -> Element(msg) {
-  background.root([component.slot("background"), ..attributes], [])
+  background.root(attributes)
 }
 
+/// A container for all the [edges](#edge) in the graph. Children of this element
+/// must be a keyed list of [`edge`](#edge) elements where every key is a unique
+/// id.
 ///
+/// Edges are rendered underneath any nodes in the graph.
 ///
 pub fn edges(children: List(#(String, Element(msg)))) -> Element(msg) {
   keyed.fragment(children)
@@ -119,7 +122,9 @@ pub fn transform(value: Transform) -> Attribute(msg) {
   viewport.transform(value)
 }
 
-///
+/// Set the initial [`transform`](#transform) of the viewport. This is most useful
+/// for server-rendered pages that may want to pre-compute the initial transform
+/// or for applications that don't want or need to control the viewport directly.
 ///
 /// > Note: setting this attribute will only affect the transform of the viewport
 /// > when it _first renders_. Subsequent changes to this attribute will have no
@@ -155,19 +160,26 @@ pub fn on_zoom(handler: fn(Transform) -> msg) -> Attribute(msg) {
   viewport.on_zoom(handler)
 }
 
-///
+/// This event is emit whenever the viewport element changes size. This is similar
+/// to attaching a [`ResizeObserver`]() to the clique viewport. You might want to
+/// listen to this event to re-fit the viewport's [`transform`](#transform) to
+/// ensure nodes remain in view.
 ///
 pub fn on_resize(handler: fn(Bounds) -> msg) -> Attribute(msg) {
   viewport.on_resize(handler)
 }
 
-///
+/// This event fires when the user initiates a connection by dragging a node's
+/// handle. It can be attached to the clique viewport or to individual handles.
 ///
 pub fn on_connection_start(handler: fn(Handle) -> msg) -> Attribute(msg) {
   handle.on_connection_start(handler)
 }
 
-///
+/// This event signifies the user initiated a connection by dragging a node's
+/// handle but released the mouse before completing the connection. Along with
+/// the source handle you'll receive the viewport x and y coordinates where the
+/// mouse was released.
 ///
 pub fn on_connection_cancel(
   handler: fn(Handle, Float, Float) -> msg,
@@ -175,7 +187,9 @@ pub fn on_connection_cancel(
   viewport.on_connection_cancel(handler)
 }
 
-///
+/// This event is emit is when a connection is completed by dropping the connection
+/// line on another handle. It can be attached to the clique viewport or to
+/// individual handles.
 ///
 pub fn on_connection_complete(
   handler: fn(Handle, Handle) -> msg,

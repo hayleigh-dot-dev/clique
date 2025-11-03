@@ -5,6 +5,7 @@ import gleam/dynamic/decode
 import gleam/json
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import justin
 import lustre
 import lustre/attribute.{type Attribute, attribute}
 import lustre/component
@@ -312,9 +313,21 @@ fn view(model: Model) -> Element(Msg) {
     }),
 
     case model.from, model.to {
-      Some(_), Some(_) -> {
-        let translate_x = "var(--cx)"
-        let translate_y = "var(--cy)"
+      Some(from), Some(to) -> {
+        let var =
+          justin.kebab_case(
+            "from-"
+            <> from.node
+            <> "-"
+            <> from.name
+            <> "-to-"
+            <> to.node
+            <> "-"
+            <> to.name,
+          )
+        let translate_x = "var(--" <> var <> "-cx)"
+        let translate_y = "var(--" <> var <> "-cy)"
+
         let transform =
           "translate("
           <> translate_x

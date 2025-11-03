@@ -1,9 +1,9 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import clique/handle.{type Handle}
+import clique/internal/mutable_dict.{type MutableDict as Dict} as dict
 import clique/internal/path
 import gleam/bool
-import gleam/dict.{type Dict}
 import gleam/option.{None, Some}
 import gleam/result
 import gleam/set

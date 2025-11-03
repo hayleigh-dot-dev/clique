@@ -15,6 +15,7 @@ import lustre/attribute
 import lustre/effect.{type Effect}
 import lustre/element.{type Element}
 import lustre/element/html
+import lustre/event
 
 // MAIN ------------------------------------------------------------------------
 
@@ -46,9 +47,9 @@ type Edge {
   Edge(id: String, source: Handle, target: Handle)
 }
 
-const count = 50
+const count = 1000
 
-const columns = 5
+const columns = 25
 
 fn init(_) -> #(Model, Effect(Msg)) {
   let nodes =
@@ -56,8 +57,8 @@ fn init(_) -> #(Model, Effect(Msg)) {
     |> list.map(fn(i) {
       Node(
         id: "node-" <> int.to_string(i),
-        x: int.to_float(150 - { i % columns } * 300),
-        y: int.to_float(150 - { i / columns } * 100),
+        x: int.to_float({ i % columns } * 100),
+        y: int.to_float({ i / columns } * 100),
         label: "Node " <> int.to_string(i),
       )
     })
@@ -98,15 +99,38 @@ fn do_measure_clique_viewport() -> Bounds
 // UPDATE ----------------------------------------------------------------------
 
 type Msg {
+  UserClickedShuffle
   UserConnectedNodes(source: Handle, target: Handle)
   UserDraggedNode(id: String, x: Float, y: Float)
   UserDroppedConnection(source: Handle, x: Float, y: Float)
   UserPannedViewport(transform: Transform)
-  ViewportChangedSize(#(Float, Float, Float, Float))
+  ViewportChangedSize(Bounds)
+  UserPannedUp
+  UserPannedLeft
+  UserPannedRight
+  UserPannedDown
 }
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
+    UserClickedShuffle -> {
+      let nodes =
+        list.map(model.nodes, fn(node) {
+          Node(
+            ..node,
+            x: int.to_float(int.random(2000)),
+            y: int.to_float(int.random(2000)),
+          )
+        })
+
+      let transform = fit(model.viewport, nodes)
+
+      let model = Model(..model, nodes:, transform:)
+      let effect = effect.none()
+
+      #(model, effect)
+    }
+
     UserConnectedNodes(source:, target:) -> {
       let id = "edge-" <> source.node <> "-" <> target.node
       let edges = [Edge(id:, source:, target:), ..model.edges]
@@ -149,6 +173,26 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       #(model, effect)
     }
 
+    UserPannedDown -> #(
+      Model(..model, transform: transform.pan(model.transform, 0.0, 50.0)),
+      effect.none(),
+    )
+
+    UserPannedLeft -> #(
+      Model(..model, transform: transform.pan(model.transform, -50.0, 0.0)),
+      effect.none(),
+    )
+
+    UserPannedRight -> #(
+      Model(..model, transform: transform.pan(model.transform, 50.0, 0.0)),
+      effect.none(),
+    )
+
+    UserPannedUp -> #(
+      Model(..model, transform: transform.pan(model.transform, 0.0, -50.0)),
+      effect.none(),
+    )
+
     UserPannedViewport(transform:) -> {
       let model = Model(..model, transform:)
       let effect = effect.none()
@@ -183,11 +227,11 @@ fn fit(viewport: Bounds, nodes: List(Node)) -> Transform {
 // VIEW ------------------------------------------------------------------------
 
 fn view(model: Model) -> Element(Msg) {
-  html.div([attribute.class("p-24 space-y-8 w-screen h-screen font-mono")], [
+  html.div([attribute.class("w-screen h-screen font-mono")], [
     clique.root(
       [
-        clique.on_resize(ViewportChangedSize),
         clique.transform(model.transform),
+        clique.on_resize(ViewportChangedSize),
         clique.on_pan(UserPannedViewport),
         clique.on_zoom(UserPannedViewport),
         clique.on_connection_cancel(UserDroppedConnection),
@@ -208,14 +252,6 @@ fn view(model: Model) -> Element(Msg) {
           background.gap(50.0, 50.0),
         ]),
 
-        clique.edges({
-          use Edge(id:, ..) as data <- list.map(model.edges)
-          let key = id
-          let html = view_edge(data)
-
-          #(key, html)
-        }),
-
         clique.nodes({
           use Node(id:, ..) as data <- list.map(model.nodes)
           let key = id
@@ -223,6 +259,64 @@ fn view(model: Model) -> Element(Msg) {
 
           #(key, html)
         }),
+
+        clique.edges({
+          use Edge(id:, ..) as data <- list.map(model.edges)
+          let key = id
+          let html = view_edge(data)
+
+          #(key, html)
+        }),
+        html.div([clique.overlay(), attribute.class("absolute top-8 left-8")], [
+          html.button(
+            [
+              event.on_click(UserClickedShuffle),
+              attribute.class(
+                "py-2 px-4 text-white bg-blue-500 rounded shadow hover:bg-blue-600 active:translate-y-px",
+              ),
+            ],
+            [html.text("Shuffle Nodes")],
+          ),
+        ]),
+
+        html.div(
+          [
+            clique.overlay(),
+            attribute.class("absolute right-8 bottom-8"),
+            attribute.class("grid grid-cols-3 grid-rows-3 gap-1"),
+            attribute.class(
+              "*:size-6 *:bg-white *:rounded *:shadow *:active:translate-y-px",
+            ),
+          ],
+          [
+            html.button(
+              [event.on_click(UserPannedUp), attribute.class("col-start-2")],
+              [html.text("↑")],
+            ),
+            html.button(
+              [event.on_click(UserPannedLeft), attribute.class("row-start-2")],
+              [html.text("←")],
+            ),
+            html.button(
+              [
+                event.on_click(UserPannedRight),
+                attribute.class("col-start-3 row-start-2"),
+              ],
+              [
+                html.text("→"),
+              ],
+            ),
+            html.button(
+              [
+                event.on_click(UserPannedDown),
+                attribute.class("col-start-2 row-start-3"),
+              ],
+              [
+                html.text("↓"),
+              ],
+            ),
+          ],
+        ),
       ],
     ),
   ])

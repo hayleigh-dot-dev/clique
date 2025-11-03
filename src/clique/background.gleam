@@ -18,10 +18,16 @@ import lustre/element/svg
 
 // COMPONENT -------------------------------------------------------------------
 
-///
+/// The name of the background component as it would appear in HTML. It is
+/// uncommon to need this string, but it may be used with Lustre's `element`
+/// function to render the background element directly.
 ///
 pub const tag: String = "clique-background"
 
+/// Explicitly register the `<clique-background>` component. Most applications
+/// will not need to call this directly, instead you should prefer
+/// [`clique.register`](../clique.html#register) to register all components at
+/// once.
 ///
 ///
 pub fn register() -> Result(Nil, lustre.Error) {
@@ -33,13 +39,16 @@ pub fn register() -> Result(Nil, lustre.Error) {
 
 // ELEMENTS --------------------------------------------------------------------
 
+/// Render the root background element. With no additional attributes this will
+/// render a default [`dots`](#Pattern) pattern. Take a look at the [`pattern`](#pattern),
+/// [`gap`](#gap), and [`size`](#size) attributes to configure a background
+/// further.
 ///
+/// Multiple backgrounds can be rendered in the viewport to produce more varied
+/// canvases.
 ///
-pub fn root(
-  attributes: List(Attribute(msg)),
-  children: List(Element(msg)),
-) -> Element(msg) {
-  element(tag, attributes, children)
+pub fn root(attributes: List(Attribute(msg))) -> Element(msg) {
+  element(tag, [component.slot("background"), ..attributes], [])
 }
 
 // ATTRIBUTES ------------------------------------------------------------------
@@ -60,13 +69,13 @@ pub fn pattern(value: Pattern) -> Attribute(msg) {
   })
 }
 
-///
+/// ![](background-dots.png)
 ///
 pub fn dots() -> Attribute(msg) {
   pattern(Dots)
 }
 
-///
+/// ![](background-lines.png)
 ///
 pub fn lines() -> Attribute(msg) {
   pattern(Lines)

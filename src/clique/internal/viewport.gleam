@@ -14,7 +14,9 @@ import clique/node
 import clique/position
 import clique/transform.{type Transform}
 import gleam/bool
-import gleam/dict.{type Dict}
+
+// import gleam/dict.{type Dict}
+import clique/internal/mutable_dict.{type MutableDict as Dict} as dict
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/float
@@ -23,6 +25,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import justin
 import lustre
 import lustre/attribute.{type Attribute, attribute}
 import lustre/component
@@ -772,23 +775,33 @@ fn view(model: Model) -> Element(Msg) {
         ..acc.1
       ]
 
+      let var =
+        justin.kebab_case(
+          "from-"
+          <> edge.source.node
+          <> "-"
+          <> edge.source.name
+          <> "-to-"
+          <> edge.target.node
+          <> "-"
+          <> edge.target.name,
+        )
+      let cx = "--" <> var <> "-cx"
+      let cy = "--" <> var <> "-cy"
+
       // There's probably a better way than rendering a whole bunch of style
       // tags.
       let positions = [
         #(key, {
           html.style(
             [],
-            "::slotted(clique-edge[from=\""
-              <> edge.source.node
-              <> " "
-              <> edge.source.name
-              <> "\"][to=\""
-              <> edge.target.node
-              <> " "
-              <> edge.target.name
-              <> "\"]) { --cx: "
+            "::slotted(clique-edge) { "
+              <> cx
+              <> ": "
               <> float.to_string(edge.cx)
-              <> "px; --cy: "
+              <> "px; "
+              <> cy
+              <> ": "
               <> float.to_string(edge.cy)
               <> "px; }",
           )
@@ -847,10 +860,6 @@ fn view(model: Model) -> Element(Msg) {
           width: 100%;
       }
 
-      slot[name=\"edges\"] {
-        display: none;
-      }
-
       #connection-line {
         width: 100%;
         height: 100%;
@@ -864,20 +873,10 @@ fn view(model: Model) -> Element(Msg) {
       "
     }),
 
+    keyed.fragment(positions),
+
     view_container([
       component.named_slot("background", [], []),
-      component.named_slot(
-        "edges",
-        [
-          event.on("slotchange", handle_slotchange),
-          edge.on_connect(EdgeConnected),
-          edge.on_disconnect(EdgeDisconnected),
-          edge.on_reconnect(EdgeReconnected),
-        ],
-        [],
-      ),
-
-      keyed.fragment(positions),
 
       view_viewport([
         keyed.namespaced(
@@ -897,6 +896,17 @@ fn view(model: Model) -> Element(Msg) {
             ]),
           ],
           edges,
+        ),
+
+        component.named_slot(
+          "edges",
+          [
+            event.on("slotchange", handle_slotchange),
+            edge.on_connect(EdgeConnected),
+            edge.on_disconnect(EdgeDisconnected),
+            edge.on_reconnect(EdgeReconnected),
+          ],
+          [],
         ),
 
         component.default_slot(

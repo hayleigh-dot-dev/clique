@@ -1,7 +1,6 @@
 // IMPORTS ---------------------------------------------------------------------
 
 import clique/transform.{type Transform}
-import gleam/dict.{type Dict}
 import gleam/dynamic/decode
 import gleam/json
 import gleam/option

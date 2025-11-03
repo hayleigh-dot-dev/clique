@@ -16,3 +16,4 @@ internal_modules = [ "clique/internal", "clique/internal/*" ]
 gleam_json = ">= 3.0.2 and < 4.0.0"
 gleam_stdlib = ">= 0.63.0 and < 2.0.0"
 lustre = ">= 5.3.4 and < 6.0.0"
+justin = ">= 1.0.1 and < 2.0.0"
