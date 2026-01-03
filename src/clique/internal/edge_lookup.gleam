@@ -5,7 +5,6 @@ import clique/internal/mutable_dict.{type MutableDict as Dict} as dict
 import clique/internal/path
 import gleam/bool
 import gleam/option.{None, Some}
-import gleam/result
 import gleam/set
 
 //
@@ -75,24 +74,25 @@ pub fn get(
     <> ":"
     <> target.name
 
-  dict.get(lookup.edges, key)
+  case dict.has_key(lookup.edges, key) {
+    True -> Ok(dict.unsafe_get(lookup.edges, key))
+    False -> Error(Nil)
+  }
 }
 
 ///
 ///
 pub fn get_all(lookup: EdgeLookup, handle: Handle) -> List(EdgeData) {
-  let result = {
-    use inner <- result.try(dict.get(lookup.keys, handle.node))
-    use keys <- result.map(dict.get(inner, handle.name))
-    use data, key <- set.fold(keys, [])
+  use <- bool.guard(!dict.has_key(lookup.keys, handle.node), [])
+  let inner = dict.unsafe_get(lookup.keys, handle.node)
+  use <- bool.guard(!dict.has_key(inner, handle.name), [])
+  let keys = dict.unsafe_get(inner, handle.name)
+  use data, key <- set.fold(keys, [])
 
-    case dict.get(lookup.edges, key) {
-      Ok(edge) -> [edge, ..data]
-      Error(_) -> data
-    }
+  case dict.has_key(lookup.edges, key) {
+    True -> [dict.unsafe_get(lookup.edges, key), ..data]
+    False -> data
   }
-
-  result.unwrap(result, [])
 }
 
 //
@@ -200,10 +200,12 @@ pub fn delete(lookup: EdgeLookup, source: Handle, target: Handle) -> EdgeLookup 
 
   let edges = dict.delete(lookup.edges, key)
 
-  let keys = case dict.get(lookup.keys, source.node) {
-    Ok(inner) ->
-      case dict.get(inner, source.name) {
-        Ok(source_keys) ->
+  let keys = case dict.has_key(lookup.keys, source.node) {
+    True -> {
+      let inner = dict.unsafe_get(lookup.keys, source.node)
+      case dict.has_key(inner, source.name) {
+        True -> {
+          let source_keys = dict.unsafe_get(inner, source.name)
           case set.size(source_keys) == 1 {
             True ->
               dict.insert(
@@ -219,17 +221,21 @@ pub fn delete(lookup: EdgeLookup, source: Handle, target: Handle) -> EdgeLookup 
                 dict.insert(inner, source.name, set.delete(source_keys, key)),
               )
           }
+        }
 
-        Error(_) -> lookup.keys
+        False -> lookup.keys
       }
+    }
 
-    Error(_) -> lookup.keys
+    False -> lookup.keys
   }
 
-  let keys = case dict.get(keys, target.node) {
-    Ok(inner) ->
-      case dict.get(inner, target.name) {
-        Ok(target_keys) ->
+  let keys = case dict.has_key(keys, target.node) {
+    True -> {
+      let inner = dict.unsafe_get(keys, target.node)
+      case dict.has_key(inner, target.name) {
+        True -> {
+          let target_keys = dict.unsafe_get(inner, target.name)
           case set.size(target_keys) == 1 {
             True ->
               dict.insert(keys, source.node, dict.delete(inner, target.name))
@@ -241,19 +247,22 @@ pub fn delete(lookup: EdgeLookup, source: Handle, target: Handle) -> EdgeLookup 
                 dict.insert(inner, target.name, set.delete(target_keys, key)),
               )
           }
+        }
 
-        Error(_) -> keys
+        False -> keys
       }
+    }
 
-    Error(_) -> keys
+    False -> keys
   }
 
   EdgeLookup(edges:, keys:)
 }
 
 pub fn delete_node(lookup: EdgeLookup, node: String) -> EdgeLookup {
-  let result = {
-    use inner <- result.map(dict.get(lookup.keys, node))
+  let edges = {
+    use <- bool.guard(!dict.has_key(lookup.keys, node), lookup.edges)
+    let inner = dict.unsafe_get(lookup.keys, node)
     use edges, _, keys <- dict.fold(inner, lookup.edges)
     use edges, key <- set.fold(keys, edges)
 
@@ -262,10 +271,7 @@ pub fn delete_node(lookup: EdgeLookup, node: String) -> EdgeLookup {
 
   let keys = dict.delete(lookup.keys, node)
 
-  case result {
-    Ok(edges) -> EdgeLookup(edges:, keys:)
-    Error(_) -> EdgeLookup(..lookup, keys:)
-  }
+  EdgeLookup(edges:, keys:)
 }
 
 ///
@@ -275,14 +281,19 @@ pub fn update_node(
   node: String,
   offset: #(Float, Float),
 ) -> EdgeLookup {
-  let result = {
-    use inner <- result.map(dict.get(lookup.keys, node))
+  let #(edges, _) = {
+    use <- bool.guard(!dict.has_key(lookup.keys, node), #(
+      lookup.edges,
+      set.new(),
+    ))
+    let inner = dict.unsafe_get(lookup.keys, node)
     use #(edges, seen), _, keys <- dict.fold(inner, #(lookup.edges, set.new()))
     use #(edges, seen), key <- set.fold(keys, #(edges, seen))
     use <- bool.guard(set.contains(seen, key), #(edges, seen))
 
-    case dict.get(edges, key) {
-      Ok(edge) -> {
+    case dict.has_key(edges, key) {
+      True -> {
+        let edge = dict.unsafe_get(edges, key)
         let from = case edge.source.node == node {
           True -> #(edge.from.0 +. offset.0, edge.from.1 +. offset.1)
           False -> edge.from
@@ -299,14 +310,11 @@ pub fn update_node(
         #(dict.insert(edges, key, updated_edge), set.insert(seen, key))
       }
 
-      Error(_) -> #(edges, set.insert(seen, key))
+      False -> #(edges, set.insert(seen, key))
     }
   }
 
-  case result {
-    Ok(#(edges, _)) -> EdgeLookup(..lookup, edges:)
-    Error(_) -> lookup
-  }
+  EdgeLookup(..lookup, edges:)
 }
 
 ///
@@ -316,37 +324,32 @@ pub fn update(
   handle: Handle,
   position: #(Float, Float),
 ) -> EdgeLookup {
-  let result = {
-    use inner <- result.try(dict.get(lookup.keys, handle.node))
-    use keys <- result.map(dict.get(inner, handle.name))
+  let edges = {
+    use <- bool.guard(!dict.has_key(lookup.keys, handle.node), lookup.edges)
+    let inner = dict.unsafe_get(lookup.keys, handle.node)
+    use <- bool.guard(!dict.has_key(inner, handle.name), lookup.edges)
+    let keys = dict.unsafe_get(inner, handle.name)
     use edges, key <- set.fold(keys, lookup.edges)
+    use <- bool.guard(!dict.has_key(edges, key), edges)
 
-    case dict.get(edges, key) {
-      Ok(edge) -> {
-        let from = case edge.source == handle {
-          True -> position
-          False -> edge.from
-        }
-
-        let to = case edge.target == handle {
-          True -> position
-          False -> edge.to
-        }
-
-        let #(path, cx, cy) = path.default(edge.kind, from, to)
-        let updated_edge = EdgeData(..edge, from:, to:, path:, cx:, cy:)
-
-        dict.insert(edges, key, updated_edge)
-      }
-
-      Error(_) -> edges
+    let edge = dict.unsafe_get(edges, key)
+    let from = case edge.source == handle {
+      True -> position
+      False -> edge.from
     }
+
+    let to = case edge.target == handle {
+      True -> position
+      False -> edge.to
+    }
+
+    let #(path, cx, cy) = path.default(edge.kind, from, to)
+    let updated_edge = EdgeData(..edge, from:, to:, path:, cx:, cy:)
+
+    dict.insert(edges, key, updated_edge)
   }
 
-  case result {
-    Ok(edges) -> EdgeLookup(..lookup, edges:)
-    Error(_) -> lookup
-  }
+  EdgeLookup(..lookup, edges:)
 }
 
 ///

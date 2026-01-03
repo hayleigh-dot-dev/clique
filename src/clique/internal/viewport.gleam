@@ -7,6 +7,8 @@ import clique/internal/context
 import clique/internal/dom.{type HtmlElement}
 import clique/internal/drag.{type DragState}
 import clique/internal/edge_lookup.{type EdgeLookup}
+import clique/internal/mutable_dict.{type MutableDict}
+import clique/internal/node_group
 import clique/internal/number
 import clique/internal/path
 import clique/internal/prop.{type Prop, Controlled, Touched, Unchanged}
@@ -14,9 +16,7 @@ import clique/node
 import clique/position
 import clique/transform.{type Transform}
 import gleam/bool
-
-// import gleam/dict.{type Dict}
-import clique/internal/mutable_dict.{type MutableDict as Dict} as dict
+import gleam/dict
 import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/float
@@ -163,7 +163,7 @@ type Model {
   Model(
     transform: Prop(Transform),
     observer: Option(NodeResizeObserver),
-    handles: Dict(Handle, #(Float, Float)),
+    handles: MutableDict(String, #(Float, Float)),
     edges: EdgeLookup,
     panning: DragState,
     connection: Option(#(Handle, #(Float, Float))),
@@ -184,7 +184,7 @@ fn init(_) -> #(Model, Effect(Msg)) {
     Model(
       transform: prop.new(transform.init()),
       observer: None,
-      handles: dict.new(),
+      handles: mutable_dict.new(),
       edges: edge_lookup.new(),
       panning: drag.Settled,
       connection: None,
@@ -260,7 +260,7 @@ type Msg {
   EdgesMounted(edges: List(#(Handle, Handle, String)))
   InertiaSimulationTicked
   NodeMounted(element: HtmlElement, id: String)
-  NodeMoved(id: String, dx: Float, dy: Float)
+  NodesMoved(dict.Dict(String, #(Float, Float)))
   NodeResizeObserverStarted(observer: NodeResizeObserver)
   NodesResized(changes: List(#(String, String, Float, Float)))
   ParentSetInitialTransform(transform: Transform)
@@ -287,39 +287,54 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     }
 
     EdgeConnected(from: source, to: target, kind:) -> {
-      case dict.get(model.handles, source), dict.get(model.handles, target) {
-        Ok(from), Ok(to) -> {
-          let edges =
-            edge_lookup.insert(model.edges, source, from, target, to, kind)
-          let model = Model(..model, edges:)
-          let effect = effect.none()
+      let from_key = source.node <> " " <> source.name
+      let to_key = target.node <> " " <> target.name
 
-          #(model, effect)
-        }
+      use <- bool.guard(mutable_dict.has_key(model.handles, from_key), #(
+        model,
+        effect.none(),
+      ))
 
-        _, _ -> #(model, effect.none())
-      }
+      use <- bool.guard(mutable_dict.has_key(model.handles, to_key), #(
+        model,
+        effect.none(),
+      ))
+
+      let from = mutable_dict.unsafe_get(model.handles, from_key)
+      let to = mutable_dict.unsafe_get(model.handles, to_key)
+
+      let edges =
+        edge_lookup.insert(model.edges, source, from, target, to, kind)
+
+      let model = Model(..model, edges:)
+      let effect = effect.none()
+
+      #(model, effect)
     }
 
     EdgeReconnected(prev:, next:, kind:) -> {
       let edges = edge_lookup.delete(model.edges, prev.0, prev.1)
+      let from_key = { next.0 }.node <> " " <> { next.0 }.name
+      let to_key = { next.1 }.node <> " " <> { next.1 }.name
 
-      case dict.get(model.handles, next.0), dict.get(model.handles, next.1) {
-        Ok(from), Ok(to) -> {
-          let edges = edge_lookup.insert(edges, next.0, from, next.1, to, kind)
-          let model = Model(..model, edges:)
-          let effect = effect.none()
+      use <- bool.guard(mutable_dict.has_key(model.handles, from_key), #(
+        Model(..model, edges:),
+        effect.none(),
+      ))
 
-          #(model, effect)
-        }
+      use <- bool.guard(mutable_dict.has_key(model.handles, to_key), #(
+        Model(..model, edges:),
+        effect.none(),
+      ))
 
-        _, _ -> {
-          let model = Model(..model, edges:)
-          let effect = effect.none()
+      let from = mutable_dict.unsafe_get(model.handles, from_key)
+      let to = mutable_dict.unsafe_get(model.handles, to_key)
 
-          #(model, effect)
-        }
-      }
+      let edges = edge_lookup.insert(edges, next.0, from, next.1, to, kind)
+      let model = Model(..model, edges:)
+      let effect = effect.none()
+
+      #(model, effect)
     }
 
     EdgesMounted(edges:) -> {
@@ -333,34 +348,43 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
               edge_lookup.insert_edge(edges, source, target, existing)
 
             Error(_) -> {
-              let from = dict.get(model.handles, edge.0)
-              let to = dict.get(model.handles, edge.1)
+              let from_key = { edge.0 }.node <> " " <> { edge.0 }.name
+              let to_key = { edge.1 }.node <> " " <> { edge.1 }.name
+              let has_from = mutable_dict.has_key(model.handles, from_key)
+              let has_to = mutable_dict.has_key(model.handles, to_key)
 
-              case from, to {
-                Ok(from), Ok(to) ->
-                  edge_lookup.insert(edges, edge.0, from, edge.1, to, edge.2)
-
-                Ok(from), Error(_) ->
+              case has_from, has_to {
+                True, True ->
                   edge_lookup.insert(
                     edges,
                     edge.0,
-                    from,
+                    mutable_dict.unsafe_get(model.handles, from_key),
+                    edge.1,
+                    mutable_dict.unsafe_get(model.handles, to_key),
+                    edge.2,
+                  )
+
+                True, False ->
+                  edge_lookup.insert(
+                    edges,
+                    edge.0,
+                    mutable_dict.unsafe_get(model.handles, from_key),
                     edge.1,
                     #(0.0, 0.0),
                     edge.2,
                   )
 
-                Error(_), Ok(to) ->
+                False, True ->
                   edge_lookup.insert(
                     edges,
                     edge.0,
                     #(0.0, 0.0),
                     edge.1,
-                    to,
+                    mutable_dict.unsafe_get(model.handles, to_key),
                     edge.2,
                   )
 
-                _, _ ->
+                False, False ->
                   edge_lookup.insert(
                     edges,
                     edge.0,
@@ -386,17 +410,28 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
         None -> #(model, effect.none())
       }
 
-    NodeMoved(id: node, dx:, dy:) -> {
-      let handles =
-        dict.fold(model.handles, dict.new(), fn(handles, key, position) {
-          case key.node == node {
-            True ->
-              dict.insert(handles, key, #(position.0 +. dx, position.1 +. dy))
-            False -> dict.insert(handles, key, position)
-          }
+    NodesMoved(changes) -> {
+      let init = #(model.handles, model.edges)
+      let #(handles, edges) =
+        dict.fold(changes, init, fn(acc, node, change) {
+          let #(dx, dy) = change
+          let handles =
+            mutable_dict.fold(model.handles, acc.0, fn(handles, key, position) {
+              case string.starts_with(key, node <> " ") {
+                True ->
+                  mutable_dict.insert(handles, key, #(
+                    position.0 +. dx,
+                    position.1 +. dy,
+                  ))
+                False -> mutable_dict.insert(handles, key, position)
+              }
+            })
+
+          let edges = edge_lookup.update_node(acc.1, node, #(dx, dy))
+
+          #(handles, edges)
         })
 
-      let edges = edge_lookup.update_node(model.edges, node, #(dx, dy))
       let model = Model(..model, handles:, edges:)
       let effect = effect.none()
 
@@ -412,7 +447,8 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           )
 
           let handle = Handle(change.0, change.1)
-          let handles = dict.insert(acc.0, handle, position)
+          let handles =
+            mutable_dict.insert(acc.0, change.0 <> " " <> change.1, position)
           let edges = edge_lookup.update(acc.1, handle, position)
 
           #(handles, edges)
@@ -534,8 +570,11 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     }
 
     UserStartedConnection(source:) -> {
-      case dict.get(model.handles, source) {
-        Ok(from) -> {
+      let key = source.node <> " " <> source.name
+
+      case mutable_dict.has_key(model.handles, key) {
+        True -> {
+          let from = mutable_dict.unsafe_get(model.handles, key)
           let model = Model(..model, connection: Some(#(source, from)))
           let effect =
             effect.batch([
@@ -547,7 +586,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           #(model, effect)
         }
 
-        Error(_) -> #(model, effect.none())
+        False -> #(model, effect.none())
       }
     }
 
@@ -759,8 +798,9 @@ fn view(model: Model) -> Element(Msg) {
   let #(positions, edges) =
     edge_lookup.fold(model.edges, #([], []), fn(acc, key, edge) {
       let edges = [
-        #(
-          key,
+        #(key, {
+          use <- element.memo([element.ref(edge.path)])
+
           svg.path([
             attribute("d", edge.path),
             attribute("fill", "none"),
@@ -770,8 +810,8 @@ fn view(model: Model) -> Element(Msg) {
             attribute("stroke-linecap", "round"),
             attribute("stroke-linejoin", "round"),
             attribute("vector-effect", "non-scaling-stroke"),
-          ]),
-        ),
+          ])
+        }),
         ..acc.1
       ]
 
@@ -792,20 +832,20 @@ fn view(model: Model) -> Element(Msg) {
       // There's probably a better way than rendering a whole bunch of style
       // tags.
       let positions = [
-        #(key, {
-          html.style(
-            [],
+        #(
+          key,
+          html.text(
             "::slotted(clique-edge) { "
-              <> cx
-              <> ": "
-              <> float.to_string(edge.cx)
-              <> "px; "
-              <> cy
-              <> ": "
-              <> float.to_string(edge.cy)
-              <> "px; }",
-          )
-        }),
+            <> cx
+            <> ": "
+            <> float.to_string(edge.cx)
+            <> "px; "
+            <> cy
+            <> ": "
+            <> float.to_string(edge.cy)
+            <> "px; }",
+          ),
+        ),
         ..acc.0
       ]
 
@@ -873,7 +913,7 @@ fn view(model: Model) -> Element(Msg) {
       "
     }),
 
-    keyed.fragment(positions),
+    keyed.element("style", [], positions),
 
     view_container([
       component.named_slot("background", [], []),
@@ -909,16 +949,17 @@ fn view(model: Model) -> Element(Msg) {
           [],
         ),
 
-        component.default_slot(
-          [
-            node.on_mount(NodeMounted),
-            node.on_change(NodeMoved),
-            node.on_select(UserSelectedNode),
-            handle.on_connection_start(UserStartedConnection),
-            handle.on_connection_complete(fn(_, _) { UserCompletedConnection }),
-          ],
-          [],
-        ),
+        node_group.root([node_group.on_changes(NodesMoved)], [
+          component.default_slot(
+            [
+              node.on_mount(NodeMounted),
+              node.on_select(UserSelectedNode),
+              handle.on_connection_start(UserStartedConnection),
+              handle.on_connection_complete(fn(_, _) { UserCompletedConnection }),
+            ],
+            [],
+          ),
+        ]),
 
         case model.connection {
           Some(#(handle, end)) ->
@@ -998,12 +1039,15 @@ fn view_viewport(children: List(Element(Msg))) -> Element(Msg) {
 // VIEW CONNECTION LINE --------------------------------------------------------
 
 fn view_connection_line(
-  handles: Dict(Handle, #(Float, Float)),
+  handles: MutableDict(String, #(Float, Float)),
   handle: Handle,
   to: #(Float, Float),
 ) -> Element(msg) {
-  case dict.get(handles, handle) {
-    Ok(from) -> {
+  let key = handle.node <> " " <> handle.name
+
+  case mutable_dict.has_key(handles, key) {
+    True -> {
+      let from = mutable_dict.unsafe_get(handles, key)
       let #(path, _, _) =
         path.bezier(from.0, from.1, position.Right, to.0, to.1, position.Left)
 
@@ -1017,6 +1061,6 @@ fn view_connection_line(
       ])
     }
 
-    Error(_) -> element.none()
+    False -> element.none()
   }
 }

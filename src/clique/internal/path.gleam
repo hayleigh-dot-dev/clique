@@ -33,16 +33,16 @@ pub fn straight(
 ) -> #(String, Float, Float) {
   let path =
     "M"
-    <> float.to_string(from_x)
+    <> format(from_x)
     <> ","
-    <> float.to_string(from_y)
+    <> format(from_y)
     <> " L"
-    <> float.to_string(to_x)
+    <> format(to_x)
     <> ","
-    <> float.to_string(to_y)
+    <> format(to_y)
 
-  let label_x = { from_x +. to_x } /. 2.0
-  let label_y = { from_y +. to_y } /. 2.0
+  let label_x = float.to_precision({ from_x +. to_x } /. 2.0, 2)
+  let label_y = float.to_precision({ from_y +. to_y } /. 2.0, 2)
 
   #(path, label_x, label_y)
 }
@@ -69,26 +69,26 @@ pub fn bezier(
 
   let path =
     "M"
-    <> float.to_string(from_x)
+    <> format(from_x)
     <> ","
-    <> float.to_string(from_y)
-    <> " C"
-    <> float.to_string(cx1)
+    <> format(from_y)
+    <> "C"
+    <> format(cx1)
     <> ","
-    <> float.to_string(cy1)
+    <> format(cy1)
     <> " "
-    <> float.to_string(cx2)
+    <> format(cx2)
     <> ","
-    <> float.to_string(cy2)
+    <> format(cy2)
     <> " "
-    <> float.to_string(to_x)
+    <> format(to_x)
     <> ","
-    <> float.to_string(to_y)
+    <> format(to_y)
 
   let label_x = from_x *. 0.125 +. cx1 *. 0.375 +. cx2 *. 0.375 +. to_x *. 0.125
   let label_y = from_y *. 0.125 +. cy1 *. 0.375 +. cy2 *. 0.375 +. to_y *. 0.125
 
-  #(path, label_x, label_y)
+  #(path, float.to_precision(label_x, 2), float.to_precision(label_y, 2))
 }
 
 fn bezier_control_point(
@@ -142,29 +142,41 @@ pub fn step(
   to_x: Float,
   to_y: Float,
 ) -> #(String, Float, Float) {
-  let mid_x = from_x +. { to_x -. from_x } /. 2.0
-  let mid_y = from_y +. { to_y -. from_y } /. 2.0
+  let mid_x = float.to_precision(from_x +. { to_x -. from_x } /. 2.0, 2)
+  let mid_y = float.to_precision(from_y +. { to_y -. from_y } /. 2.0, 2)
+  let dx1 = mid_x -. from_x
+  let dy1 = 0.0
+  let dx2 = 0.0
+  let dy2 = to_y -. from_y
+  let dx3 = to_x -. mid_x
+  let dy3 = 0.0
 
   let path =
     "M"
-    <> float.to_string(from_x)
+    <> format(from_x)
     <> ","
-    <> float.to_string(from_y)
-    <> "L"
-    <> float.to_string(mid_x)
+    <> format(from_y)
+    <> "l"
+    <> format(dx1)
     <> ","
-    <> float.to_string(from_y)
-    <> "L"
-    <> float.to_string(mid_x)
+    <> format(dy1)
+    <> "l"
+    <> format(dx2)
     <> ","
-    <> float.to_string(to_y)
-    <> "L"
-    <> float.to_string(to_x)
+    <> format(dy2)
+    <> "l"
+    <> format(dx3)
     <> ","
-    <> float.to_string(to_y)
+    <> format(dy3)
 
   let label_x = mid_x
   let label_y = mid_y
 
   #(path, label_x, label_y)
+}
+
+// UTILS -----------------------------------------------------------------------
+
+fn format(value: Float) -> String {
+  value |> float.to_precision(2) |> float.to_string
 }

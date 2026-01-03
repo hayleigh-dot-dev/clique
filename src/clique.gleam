@@ -4,6 +4,7 @@ import clique/background
 import clique/bounds.{type Bounds}
 import clique/edge
 import clique/handle.{type Handle}
+import clique/internal/node_group
 import clique/internal/viewport
 import clique/node
 import clique/transform.{type Transform}
@@ -24,6 +25,7 @@ pub fn register() -> Result(Nil, lustre.Error) {
   use _ <- result.try(edge.register())
   use _ <- result.try(handle.register())
   use _ <- result.try(node.register())
+  use _ <- result.try(node_group.register())
   use _ <- result.try(viewport.register())
 
   Ok(Nil)

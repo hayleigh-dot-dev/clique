@@ -70,12 +70,6 @@ pub fn step() -> Attribute(msg) {
   attribute("type", "step")
 }
 
-///
-///
-// pub fn custom(value: String) -> Attribute(msg) {
-//   attribute("type", value)
-// }
-
 // EVENTS ----------------------------------------------------------------------
 
 pub fn on_disconnect(handler: fn(Handle, Handle) -> msg) -> Attribute(msg) {
