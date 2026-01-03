@@ -47,9 +47,9 @@ type Edge {
   Edge(id: String, source: Handle, target: Handle)
 }
 
-const count = 1000
+const count = 450
 
-const columns = 25
+const columns = 10
 
 fn init(_) -> #(Model, Effect(Msg)) {
   let nodes =
@@ -123,9 +123,9 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           )
         })
 
-      let transform = fit(model.viewport, nodes)
+      // let transform = fit(model.viewport, nodes)
 
-      let model = Model(..model, nodes:, transform:)
+      let model = Model(..model, nodes:)
       let effect = effect.none()
 
       #(model, effect)
@@ -230,10 +230,10 @@ fn view(model: Model) -> Element(Msg) {
   html.div([attribute.class("w-screen h-screen font-mono")], [
     clique.root(
       [
-        clique.transform(model.transform),
+        clique.initial_transform(model.transform),
         clique.on_resize(ViewportChangedSize),
-        clique.on_pan(UserPannedViewport),
-        clique.on_zoom(UserPannedViewport),
+        // clique.on_pan(UserPannedViewport),
+        // clique.on_zoom(UserPannedViewport),
         clique.on_connection_cancel(UserDroppedConnection),
         attribute.class("w-full h-full bg-white rounded-lg shadow-md"),
         handle.on_connection_complete(UserConnectedNodes),
@@ -348,7 +348,7 @@ fn view_node(
 }
 
 fn view_edge(data: Edge) -> Element(msg) {
-  clique.edge(data.source, data.target, [edge.bezier()], [
+  clique.edge(data.source, data.target, [edge.linear()], [
     html.p([attribute.class("px-1 text-xs bg-yellow-300 rounded")], [
       html.text(data.source.node <> " → " <> data.target.node),
     ]),
