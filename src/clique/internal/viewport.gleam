@@ -799,8 +799,6 @@ fn view(model: Model) -> Element(Msg) {
     edge_lookup.fold(model.edges, #([], []), fn(acc, key, edge) {
       let edges = [
         #(key, {
-          use <- element.memo([element.ref(edge.path)])
-
           svg.path([
             attribute("d", edge.path),
             attribute("fill", "none"),
