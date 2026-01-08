@@ -807,7 +807,7 @@ fn view(model: Model) -> Element(Msg) {
             attribute("stroke-linecap", "round"),
             attribute("stroke-linejoin", "round"),
             attribute("vector-effect", "non-scaling-stroke"),
-            attribute.style("stroke", "var(--clique-edge-colour, black"),
+            attribute.style("stroke", "var(--clique-edge-colour, black)"),
           ])
         }),
         ..acc.1
