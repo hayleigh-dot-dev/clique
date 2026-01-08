@@ -802,7 +802,7 @@ fn view(model: Model) -> Element(Msg) {
           svg.path([
             attribute("d", edge.path),
             attribute("fill", "none"),
-            attribute("stroke", "black"),
+            attribute("stroke", "currentColor"),
             attribute("stroke-width", "2"),
             attribute("shape-rendering", "geometricPrecision"),
             attribute("stroke-linecap", "round"),
