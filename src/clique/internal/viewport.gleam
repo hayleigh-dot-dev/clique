@@ -802,12 +802,12 @@ fn view(model: Model) -> Element(Msg) {
           svg.path([
             attribute("d", edge.path),
             attribute("fill", "none"),
-            attribute("stroke", "currentColor"),
             attribute("stroke-width", "2"),
             attribute("shape-rendering", "geometricPrecision"),
             attribute("stroke-linecap", "round"),
             attribute("stroke-linejoin", "round"),
             attribute("vector-effect", "non-scaling-stroke"),
+            attribute.style("stroke", "var(--clique-edge-colour, black"),
           ])
         }),
         ..acc.1
